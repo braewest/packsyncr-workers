@@ -10,7 +10,7 @@
  * - POST /update-pack (frontend)
  */
 
-import { getAccessTokenPayload } from "./jwt.js";
+import { getAccessTokenPayload } from "./utilities/jwt.js";
 
 const FRONTEND_ORIGIN = "https://www.packsyncr.com";
 const CORS_HEADERS = {
