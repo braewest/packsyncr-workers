@@ -12,7 +12,7 @@
  * - POST /logout (frontend)
  */
 
-import { generateJWT, verifyJWT } from "./jwt.js";
+import { generateJWT, verifyJWT } from "./utilities/jwt.js";
 
 const FRONTEND_ORIGIN = "https://www.packsyncr.com";
 const CORS_HEADERS = {
