@@ -8,10 +8,13 @@
  * - POST /create-pack (frontend)
  * - POST /delete-pack (frontend)
  * - POST /update-pack (frontend)
+ * 
+ * - POST /create-invite (frontend)
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
 import { createPack, updatePack, deletePack } from "./packs.js"
+import { createPackInvite } from "./invites.js"
 
 const FRONTEND_ORIGIN = "https://www.packsyncr.com";
 const CORS_HEADERS = {
@@ -38,12 +41,18 @@ export default {
     }
 
     try {
+      // Request Handler
       if (path === "/create-pack" && request.method === "POST") {
         return await handleCreatePack(request, env);
-      } else if (path === "/update-pack" && request.method === "POST") {
+      }
+      if (path === "/update-pack" && request.method === "POST") {
         return await handleUpdatePack(request, env);
-      } else if (path === "/delete-pack" && request.method === "POST") {
+      }
+      if (path === "/delete-pack" && request.method === "POST") {
         return await handleDeletePack(request, env);
+      }
+      if (path === "/create-invite" && request.method === "POST") {
+        return await handleCreateInvite(request, env);
       }
       return new Response("Not found", {
         status: 404,
@@ -77,7 +86,7 @@ async function handleCreatePack(request, env) {
   }
 
   // Retrieve uuid
-  const owner_uuid = payload.sub;
+  const requester_uuid = payload.sub;
 
   // Retrieve body information
   let body;
@@ -109,7 +118,7 @@ async function handleCreatePack(request, env) {
   const user = await env.PACKSYNCR_DB.prepare(`
     SELECT * FROM users
     WHERE uuid = ?
-  `).bind(owner_uuid).first();
+  `).bind(requester_uuid).first();
 
   if (!user) {
     return new Response(JSON.stringify({ error: "user_not_found" }), {
@@ -127,7 +136,7 @@ async function handleCreatePack(request, env) {
 
   // Create resource pack
   try {
-    await createPack(env, owner_uuid, name, description);
+    await createPack(env, requester_uuid, name, description);
   } catch (err) {
     return new Response(JSON.stringify({ error: "create_pack_failed" }), {
       status: 500,
@@ -160,7 +169,7 @@ async function handleUpdatePack(request, env) {
   }
 
   // Retrieve uuid of updater
-  const updater_uuid = payload.sub;
+  const requester_uuid = payload.sub;
 
   // Retrieve body information
   let body;
@@ -204,7 +213,7 @@ async function handleUpdatePack(request, env) {
   try {
     await updatePack(env, {
       pack_uuid,
-      owner_uuid: updater_uuid,
+      owner_uuid: requester_uuid,
       name,
       description
     })
@@ -246,7 +255,7 @@ async function handleDeletePack(request, env) {
   }
 
   // Retrieve uuid of deleter
-  const deleter_uuid = payload.sub;
+  const requester_uuid = payload.sub;
 
   // Retrieve body information
   let body;
@@ -272,7 +281,7 @@ async function handleDeletePack(request, env) {
   try {
     await deletePack(env, {
       pack_uuid,
-      owner_uuid: deleter_uuid
+      owner_uuid: requester_uuid
     });
   } catch (err) {
     const status = 
@@ -288,6 +297,78 @@ async function handleDeletePack(request, env) {
 
   // Pack has been deleted
   return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /create-invite
+ * Called by frontend to create an invite code for a pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleCreateInvite(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack uuid, role, expires_at, and max_uses
+  const { pack_uuid, role, duration, max_uses } = body;
+  if (!pack_uuid || typeof pack_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_pack_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+  if (!role || typeof role !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_role" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  let invite_code;
+  try {
+    invite_code = await createPackInvite(env, pack_uuid, requester_uuid, role, duration, max_uses);
+  } catch (err) {
+    const status = 
+      err.message === "invalid_role" ? 400 :
+      err.message === "invalid_duration" ? 400 :
+      err.message === "invalid_max_uses" ? 400 :
+      err.message === "forbidden_action" ? 403 :
+      err.message === "pack_not_found" ? 404 :
+      err.message === "db_insert_failed" ? 500 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Invite has been created
+  return new Response(JSON.stringify({ invite_code }), {
     status: 200,
     headers: CORS_HEADERS
   });
