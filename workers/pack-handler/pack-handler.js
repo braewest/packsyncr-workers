@@ -11,11 +11,12 @@
  * 
  * - POST /create-invite (frontend)
  * - POST /redeem-invite (frontend)
+ * - POST /delete-invite (frontend)
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
 import { createPack, updatePack, deletePack } from "./packs.js"
-import { createPackInvite, redeemPackInvite } from "./invites.js"
+import { createPackInvite, redeemPackInvite, deleteInvite } from "./invites.js"
 
 const FRONTEND_ORIGIN = "https://www.packsyncr.com";
 const CORS_HEADERS = {
@@ -57,6 +58,9 @@ export default {
       }
       if (path === "/redeem-invite" && request.method === "POST") {
         return await handleRedeemInvite(request, env);
+      }
+      if (path === "/delete-invite" && request.method === "POST") {
+        return await handleDeleteInvite(request, env);
       }
       return new Response("Not found", {
         status: 404,
@@ -410,7 +414,7 @@ async function handleRedeemInvite(request, env) {
     });
   }
 
-  // Retrieve pack uuid, role, expires_at, and max_uses
+  // Retrieve invite_code
   const { invite_code } = body;
   if (!invite_code || typeof invite_code !== "string") {
     return new Response(JSON.stringify({ error: "invalid_invite_code" }), {
@@ -439,6 +443,68 @@ async function handleRedeemInvite(request, env) {
   }
 
   // Invite has been redeemed
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /delete-invite
+ * Called by frontend to delete an invite code for a pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleDeleteInvite(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve invite_code
+  const { invite_code } = body;
+  if (!invite_code || typeof invite_code !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_invite_code" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  try {
+    await deleteInvite(env, invite_code, requester_uuid);
+  } catch (err) {
+    const status = 
+      err.message === "forbidden_action" ? 403 :
+      err.message === "invite_not_found" ? 404 :
+      err.message === "pack_not_found" ? 404 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Invite has been deleted
   return new Response(JSON.stringify({ success: true }), {
     status: 200,
     headers: CORS_HEADERS
