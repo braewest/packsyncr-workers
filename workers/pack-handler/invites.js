@@ -138,6 +138,34 @@ export async function redeemPackInvite(env, invite_code, requester_uuid) {
     }
   }
 
+  // Check if user can follow another pack (unless they already have an existing role)
+  if (!existing) {
+    // Fetch requester information
+    const user = await env.PACKSYNCR_DB.prepare(`
+      SELECT packs_followed, follow_limit
+      FROM users
+      WHERE uuid = ?
+    `).bind(requester_uuid).first();
+
+    if (!user) {
+      throw new Error("user_not_found");
+    }
+    if (user.packs_followed >= user.follow_limit) {
+      throw new Error("follow_limit_reached");
+    }
+
+    // Increment follow count
+    try {
+      await env.PACKSYNCR_DB.prepare(`
+        UPDATE users
+        SET packs_followed = packs_followed + 1
+        WHERE uuid = ?
+      `).bind(requester_uuid).run();
+    } catch {
+      throw new Error("increment_follow_count_failed");
+    }
+  }
+
   // Add collaborator
   try {
     await env.PACKSYNCR_DB.prepare(`
