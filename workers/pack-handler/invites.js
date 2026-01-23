@@ -6,10 +6,15 @@
  *               Can read all resources in a pack.
  * 
  * admin: Can add and update their own resources, as well as delete any resources from a pack.
- *        Can generate invite codes.
+ *        Can generate invite codes (excluding admin invites).
  *        Can read all resources in a pack.
  */
 const COLLABORATOR_ROLES = ["follower", "collaborator", "admin"];
+const ROLE_PRIORITY = {
+  follower: 1,
+  collaborator: 2,
+  admin: 3
+};
 
 const MINIMUM_SET_DURATION = 300;
 const MINIMUM_SET_MAX_USES = 1;
@@ -54,8 +59,16 @@ export async function createPackInvite(env, pack_uuid, requester_uuid, role, dur
     }
 
     if (pack.owner_uuid !== requester_uuid) {
-      // TODO: Check if the requester is an admin
-      throw new Error("forbidden_action");
+      // Check if the requester is an admin
+      const collaborator = await env.PACKSYNCR_DB.prepare(`
+        SELECT role
+        FROM pack_collaborators
+        WHERE pack_uuid = ? AND user_uuid = ?
+      `).bind(pack_uuid, requester_uuid).first();
+
+      if (!collaborator || collaborator.role !== "admin" || role === "admin") { // Admins cannot generate invite codes for admin role
+        throw new Error("forbidden_action");
+      }
     }
 
     // Generate unique invite code
@@ -111,8 +124,19 @@ export async function redeemPackInvite(env, invite_code, requester_uuid) {
     throw new Error("invite_used_up");
   }
 
-  // Check if already a collaborator
-  // TODO: If user is already a collaborator, only change if it is higher access
+  // Check if already an existing collaborator
+  const existing = await env.PACKSYNCR_DB.prepare(`
+    SELECT role
+    FROM pack_collaborators
+    WHERE pack_uuid = ? AND user_uuid = ?
+  `).bind(invite.pack_uuid, requester_uuid).first();
+
+  if (existing) {
+    // If existing role priority is higher or equal, do nothing
+    if (ROLE_PRIORITY[existing.role] >= ROLE_PRIORITY[invite.role]) {
+      return; // User will still get a 200 status code because they are a collaborator at or above the redeemable level
+    }
+  }
 
   // Add collaborator
   try {
