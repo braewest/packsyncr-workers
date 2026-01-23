@@ -193,6 +193,44 @@ export async function redeemPackInvite(env, invite_code, requester_uuid) {
   }
 }
 
+/**
+ * Delete an invite code for a resource pack if requester is the invite creator or owner
+ */
+export async function deleteInvite(env, invite_code, requester_uuid) {
+  // Fetch invite
+  const invite = await env.PACKSYNCR_DB.prepare(`
+    SELECT pack_uuid, creator_uuid
+    FROM pack_invite_codes
+    WHERE invite_code = ?
+  `).bind(invite_code).first();
+
+  if (!invite) {
+    throw new Error("invite_not_found");
+  }
+
+  // Check if requester is able to delete the invite code (creator or pack owner)
+  if (invite.creator_uuid !== requester_uuid) {
+    // Fetch pack to get the owner
+    const pack = await env.PACKSYNCR_DB.prepare(`
+      SELECT owner_uuid
+      FROM resource_packs
+      WHERE pack_uuid = ?
+    `).bind(invite.pack_uuid).first();
+
+    if (!pack) {
+      throw new Error("pack_not_found");
+    }
+
+    // Check if requester is owner
+    if (pack.owner_uuid !== requester_uuid) {
+      throw new Error("forbidden_action");
+    }
+  }
+
+  // Delete invite
+  await deleteInviteFromCode(env, invite_code);
+}
+
 async function deleteInviteFromCode(env, invite_code) {
   await env.PACKSYNCR_DB.prepare(`
     DELETE FROM pack_invite_codes
