@@ -425,8 +425,11 @@ async function handleRedeemInvite(request, env) {
   } catch (err) {
     const status = 
       err.message === "invite_expired" ? 400 :
+      err.message === "follow_limit_reached" ? 403 :
       err.message === "invite_not_found" ? 404 :
+      err.message === "user_not_found" ? 404 :
       err.message === "redeem_failed" ? 500 :
+      err.message === "increment_follow_count_failed" ? 500 :
       500;
 
       return new Response(JSON.stringify({ error: err.message }), {
