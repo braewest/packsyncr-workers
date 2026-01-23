@@ -12,11 +12,14 @@
  * - POST /create-invite (frontend)
  * - POST /redeem-invite (frontend)
  * - POST /delete-invite (frontend)
+ * 
+ * - POST /unfollow-pack (frontend)
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
 import { createPack, updatePack, deletePack } from "./packs.js"
 import { createPackInvite, redeemPackInvite, deleteInvite } from "./invites.js"
+import { unfollowPack } from "./users.js"
 
 const FRONTEND_ORIGIN = "https://www.packsyncr.com";
 const CORS_HEADERS = {
@@ -61,6 +64,9 @@ export default {
       }
       if (path === "/delete-invite" && request.method === "POST") {
         return await handleDeleteInvite(request, env);
+      }
+      if (path === "/unfollow-pack" && request.method === "POST") {
+        return await handleUnfollowPack(request, env);
       }
       return new Response("Not found", {
         status: 404,
@@ -505,6 +511,67 @@ async function handleDeleteInvite(request, env) {
   }
 
   // Invite has been deleted
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /unfollow-pack
+ * Called by frontend for a user to unfollow a pack they are a follower on.
+ * Authorization: Bearer <access_token>
+ */
+async function handleUnfollowPack(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack_uuid
+  const { pack_uuid } = body;
+  if (!pack_uuid || typeof pack_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_pack_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  try {
+    await unfollowPack(env, pack_uuid, requester_uuid);
+  } catch (err) {
+    const status = 
+      err.message === "not_following_pack" ? 400 :
+      err.message === "forbidden_action" ? 403 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Pack has been unfollowed
   return new Response(JSON.stringify({ success: true }), {
     status: 200,
     headers: CORS_HEADERS
