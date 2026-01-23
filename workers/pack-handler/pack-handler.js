@@ -10,11 +10,12 @@
  * - POST /update-pack (frontend)
  * 
  * - POST /create-invite (frontend)
+ * - POST /redeem-invite (frontend)
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
 import { createPack, updatePack, deletePack } from "./packs.js"
-import { createPackInvite } from "./invites.js"
+import { createPackInvite, redeemPackInvite } from "./invites.js"
 
 const FRONTEND_ORIGIN = "https://www.packsyncr.com";
 const CORS_HEADERS = {
@@ -53,6 +54,9 @@ export default {
       }
       if (path === "/create-invite" && request.method === "POST") {
         return await handleCreateInvite(request, env);
+      }
+      if (path === "/redeem-invite" && request.method === "POST") {
+        return await handleRedeemInvite(request, env);
       }
       return new Response("Not found", {
         status: 404,
@@ -348,6 +352,7 @@ async function handleCreateInvite(request, env) {
     });
   }
 
+  // Create invite code
   let invite_code;
   try {
     invite_code = await createPackInvite(env, pack_uuid, requester_uuid, role, duration, max_uses);
@@ -369,6 +374,69 @@ async function handleCreateInvite(request, env) {
 
   // Invite has been created
   return new Response(JSON.stringify({ invite_code }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /redeem-invite
+ * Called by frontend to redeem an invite code for a user to join a pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleRedeemInvite(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack uuid, role, expires_at, and max_uses
+  const { invite_code } = body;
+  if (!invite_code || typeof invite_code !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_invite_code" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Redeem invite code
+  try {
+    await redeemPackInvite(env, invite_code, requester_uuid);
+  } catch (err) {
+    const status = 
+      err.message === "invite_expired" ? 400 :
+      err.message === "invite_not_found" ? 404 :
+      err.message === "redeem_failed" ? 500 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Invite has been redeemed
+  return new Response(JSON.stringify({ success: true }), {
     status: 200,
     headers: CORS_HEADERS
   });
