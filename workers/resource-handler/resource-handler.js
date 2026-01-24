@@ -7,10 +7,11 @@
  * Endpoints:
  * - POST /create-resource (frontend)
  * - POST /update-resource (frontend)
+ * - POST /delete-resource (frontend)
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
-import { createResource, updateResource } from "./resources.js";
+import { createResource, updateResource, deleteResource } from "./resources.js";
 
 const FRONTEND_ORIGIN = "https://www.packsyncr.com";
 const CORS_HEADERS = {
@@ -38,6 +39,9 @@ export default {
       }
       if (path === "/update-resource" && request.method === "POST") {
         return await handleUpdateResource(request, env);
+      }
+      if (path === "/delete-resource" && request.method === "POST") {
+        return await handleDeleteResource(request, env);
       }
       return new Response("Not found", {
         status: 404,
@@ -225,6 +229,67 @@ async function handleUpdateResource(request, env) {
   }
 
   // Resource has been updated
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /delete-resource
+ * Called by frontend to delete an existing resource owner by the requester.
+ * Authorization: Bearer <access_token>
+ */
+async function handleDeleteResource(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve resource_uuid
+  const { resource_uuid } = body;
+  if (!resource_uuid || typeof resource_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_resource_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Delete exisiting resource
+  try {
+    await deleteResource(env, resource_uuid, requester_uuid);
+  } catch (err) {
+    const status = 
+      err.message === "forbidden_action" ? 403 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Resource has been deleted
   return new Response(JSON.stringify({ success: true }), {
     status: 200,
     headers: CORS_HEADERS
