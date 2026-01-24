@@ -13,12 +13,14 @@
  * - POST /redeem-invite (frontend)
  * - POST /delete-invite (frontend)
  * 
+ * - POST /add-resource (frontend)
+ * 
  * - POST /unfollow-pack (frontend)
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
 import { createPack, updatePack, deletePack } from "./packs.js"
-import { createPackInvite, redeemPackInvite, deleteInvite } from "./invites.js"
+import { createPackInvite, redeemPackInvite, deleteInvite, addResourceToPack } from "./invites.js"
 import { unfollowPack } from "./users.js"
 
 const FRONTEND_ORIGIN = "https://www.packsyncr.com";
@@ -59,6 +61,9 @@ export default {
       }
       if (path === "/delete-invite" && request.method === "POST") {
         return await handleDeleteInvite(request, env);
+      }
+      if (path === "/add-resource" && request.method === "POST") {
+        return await handleAddResource(request, env);
       }
       if (path === "/unfollow-pack" && request.method === "POST") {
         return await handleUnfollowPack(request, env);
@@ -437,6 +442,7 @@ async function handleRedeemInvite(request, env) {
   } catch (err) {
     const status = 
       err.message === "invite_expired" ? 400 :
+      err.message === "invite_used_up" ? 400 :
       err.message === "follow_limit_reached" ? 403 :
       err.message === "invite_not_found" ? 404 :
       err.message === "user_not_found" ? 404 :
@@ -497,6 +503,7 @@ async function handleDeleteInvite(request, env) {
     });
   }
 
+  // delete invite
   try {
     await deleteInvite(env, invite_code, requester_uuid);
   } catch (err) {
@@ -515,6 +522,81 @@ async function handleDeleteInvite(request, env) {
   // Invite has been deleted
   return new Response(JSON.stringify({ success: true }), {
     status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /add-resource
+ * Called by frontend to create a new resource pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleAddResource(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack_uuid and invite_code
+  const { pack_uuid, invite_code } = body;
+  if (!pack_uuid || typeof pack_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_pack_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+  if (!invite_code || typeof invite_code !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_invite_code" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Add resource to pack
+  try {
+    await addResourceToPack(env, pack_uuid, requester_uuid, invite_code);
+  } catch (err) {
+    const status = 
+      err.message === "invite_expired" ? 400 :
+      err.message === "invite_used_up" ? 400 :
+      err.message === "resource_limit_reached" ? 403 :
+      err.message === "unauthorized_action" ? 403 :
+      err.message === "invite_not_found" ? 404 :
+      err.message === "user_not_found" ? 404 :
+      err.message === "pack_not_found" ? 404 :
+      err.message === "redeem_failed" ? 500 :
+      err.message === "increment_resource_count_failed" ? 500 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Resource has been added
+  return new Response(JSON.stringify({ success: true }), {
+    status: 201,
     headers: CORS_HEADERS
   });
 }
