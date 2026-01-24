@@ -14,13 +14,14 @@
  * - POST /delete-invite (frontend)
  * 
  * - POST /add-resource (frontend)
+ * - POST /remove-resource (frontend)
  * 
  * - POST /unfollow-pack (frontend)
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
 import { createPack, updatePack, deletePack } from "./packs.js"
-import { createPackInvite, redeemPackInvite, deleteInvite, addResourceToPack } from "./invites.js"
+import { createPackInvite, redeemPackInvite, deleteInvite, addResourceToPack, removeResourceFromPack } from "./invites.js"
 import { unfollowPack } from "./users.js"
 
 const FRONTEND_ORIGIN = "https://www.packsyncr.com";
@@ -64,6 +65,9 @@ export default {
       }
       if (path === "/add-resource" && request.method === "POST") {
         return await handleAddResource(request, env);
+      }
+      if (path === "/remove-resource" && request.method === "POST") {
+        return await handleRemoveResource(request, env);
       }
       if (path === "/unfollow-pack" && request.method === "POST") {
         return await handleUnfollowPack(request, env);
@@ -528,7 +532,7 @@ async function handleDeleteInvite(request, env) {
 
 /**
  * /add-resource
- * Called by frontend to create a new resource pack.
+ * Called by frontend to add resource to resource pack.
  * Authorization: Bearer <access_token>
  */
 async function handleAddResource(request, env) {
@@ -597,6 +601,76 @@ async function handleAddResource(request, env) {
   // Resource has been added
   return new Response(JSON.stringify({ success: true }), {
     status: 201,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /remove-resource
+ * Called by frontend to remove resource from resource pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleRemoveResource(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack_uuid and resource_uuid
+  const { pack_uuid, resource_uuid } = body;
+  if (!pack_uuid || typeof pack_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_pack_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+  if (!resource_uuid || typeof resource_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_resource_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Remove resource from pack
+  try {
+    await removeResourceFromPack(env, pack_uuid, resource_uuid, requester_uuid);
+  } catch (err) {
+    const status = 
+      err.message === "unauthorized_action" ? 403 :
+      err.message === "pack_resource_not_found" ? 404 :
+      err.message === "user_not_found" ? 404 :
+      err.message === "remove_failed" ? 500 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Resource has been removed
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
     headers: CORS_HEADERS
   });
 }
