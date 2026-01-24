@@ -56,6 +56,9 @@ export async function createResource(env, requester_uuid, type, name, descriptio
   `).bind(requester_uuid).run();
 }
 
+/**
+ * Update a resource owner by the requester.
+ */
 export async function updateResource(env, resource_uuid, requester_uuid, name, description) {
   const now = Math.floor(Date.now() / 1000); // Current unix timestamp in seconds
 
@@ -96,4 +99,26 @@ export async function updateResource(env, resource_uuid, requester_uuid, name, d
   if (result.changes === 0) {
     throw new Error("forbidden_action");
   }
+}
+
+/**
+ * Delete an existing resource owned by the requester
+ */
+export async function deleteResource(env, resource_uuid, requester_uuid) {
+  // Delete resource
+  const result = await env.PACKSYNCR_DB.prepare(`
+    DELETE FROM resources
+    WHERE resource_uuid = ? AND owner_uuid = ?
+  `).bind(resource_uuid, requester_uuid).run();
+
+  if (result.meta.changes === 0) {
+    throw new Error("forbidden_action");
+  }
+
+  // Decrement user's resource count
+  await env.PACKSYNCR_DB.prepare(`
+    UPDATE users
+    SET resources_created = resources_created - 1
+    WHERE uuid = ? AND resources_created > 0
+  `).bind(requester_uuid).run();
 }
