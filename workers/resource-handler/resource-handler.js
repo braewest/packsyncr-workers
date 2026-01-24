@@ -10,11 +10,12 @@
  * - POST /delete-resource (frontend)
  * 
  * - POST /create-invite (frontend)
+ * - POST /delete-invite (frontend)
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
 import { createResource, updateResource, deleteResource } from "./resources.js";
-import { createInvite } from "./invites.js";
+import { createInvite, deleteInvite } from "./invites.js";
 
 const FRONTEND_ORIGIN = "https://www.packsyncr.com";
 const CORS_HEADERS = {
@@ -48,6 +49,9 @@ export default {
       }
       if (path === "/create-invite" && request.method === "POST") {
         return await handleCreateInvite(request, env);
+      }
+      if (path === "/delete-invite" && request.method === "POST") {
+        return await handleDeleteInvite(request, env);
       }
       return new Response("Not found", {
         status: 404,
@@ -333,7 +337,7 @@ async function handleCreateInvite(request, env) {
     });
   }
 
-  // Retrieve resource_uuid
+  // Retrieve resource_uuid, duration (optional), and max_uses (optional)
   const { resource_uuid, duration, max_uses } = body;
   if (!resource_uuid || typeof resource_uuid !== "string") {
     return new Response(JSON.stringify({ error: "invalid_resource_uuid" }), {
@@ -363,6 +367,69 @@ async function handleCreateInvite(request, env) {
 
   // Invite has been created
   return new Response(JSON.stringify({ invite_code }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /delete-invite
+ * Called by frontend to delete an invite code for a resource.
+ * Authorization: Bearer <access_token>
+ */
+async function handleDeleteInvite(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve invite_code
+  const { invite_code } = body;
+  if (!invite_code || typeof invite_code !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_invite_code" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Delete invite
+  try {
+    await deleteInvite(env, invite_code, requester_uuid);
+  } catch (err) {
+    const status = 
+      err.message === "forbidden_action" ? 403 :
+      err.message === "invite_not_found" ? 404 :
+      err.message === "resource_not_found" ? 404 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Invite has been deleted
+  return new Response(JSON.stringify({ success: true }), {
     status: 200,
     headers: CORS_HEADERS
   });
