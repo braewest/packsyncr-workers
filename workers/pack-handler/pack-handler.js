@@ -6,8 +6,8 @@
  * 
  * Endpoints:
  * - POST /create-pack (frontend)
- * - POST /delete-pack (frontend)
  * - POST /update-pack (frontend)
+ * - POST /delete-pack (frontend)
  * 
  * - POST /create-invite (frontend)
  * - POST /redeem-invite (frontend)
@@ -29,11 +29,6 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Content-Type": "application/json"
 };
-
-// Pack Rules
-const PACK_NAME_MIN_LENGTH = 1;
-const PACK_NAME_MAX_LENGTH = 64;
-const PACK_DESCRIPTION_MAX_LENGTH = 256;
 
 export default {
   async fetch(request, env) {
@@ -115,13 +110,13 @@ async function handleCreatePack(request, env) {
 
   // Retrieve name (required) and description (optional)
   const { name, description } = body;
-  if (!name || typeof name !== "string" || name.length < PACK_NAME_MIN_LENGTH || name.length > PACK_NAME_MAX_LENGTH) {
+  if (!name || typeof name !== "string") {
     return new Response(JSON.stringify({ error: "invalid_name"}), {
       status: 400,
       headers: CORS_HEADERS
     });
   }
-  if (description !== undefined && (typeof description !== "string" || description.length > PACK_DESCRIPTION_MAX_LENGTH)) {
+  if (description !== undefined && typeof description !== "string") {
     return new Response(JSON.stringify({ error: "invalid_description" }), {
       status: 400,
       headers: CORS_HEADERS
@@ -152,10 +147,15 @@ async function handleCreatePack(request, env) {
   try {
     await createPack(env, requester_uuid, name, description);
   } catch (err) {
-    return new Response(JSON.stringify({ error: "create_pack_failed" }), {
-      status: 500,
-      headers: CORS_HEADERS
-    });
+    const status = 
+      err.message === "invalid_name_length" ? 400 :
+      err.message === "invalid_description_length" ? 400 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
   }
 
   // Pack has been created
@@ -210,13 +210,13 @@ async function handleUpdatePack(request, env) {
       headers: CORS_HEADERS
     });
   }
-  if (name !== undefined && (typeof name !== "string" || name.length < PACK_NAME_MIN_LENGTH || name.length > PACK_NAME_MAX_LENGTH)) {
+  if (name !== undefined && typeof name !== "string") {
     return new Response(JSON.stringify({ error: "invalid_name" }), {
       status: 400,
       headers: CORS_HEADERS
     });
   }
-  if (description !== undefined && (typeof description !== "string" || description.length > PACK_DESCRIPTION_MAX_LENGTH)) {
+  if (description !== undefined && typeof description !== "string") {
     return new Response(JSON.stringify({ error: "invalid_description" }), {
       status: 400,
       headers: CORS_HEADERS
@@ -234,6 +234,8 @@ async function handleUpdatePack(request, env) {
   } catch (err) {
     const status = 
       err.message === "invalid_fields" ? 400 :
+      err.messgae === "invalid_name_length" ? 400 :
+      err.message === "invalid_description_length" ? 400 :
       err.message === "forbidden_action" ? 403 :
       err.message === "manifest_not_updated" ? 500 :
       500;
