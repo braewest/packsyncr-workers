@@ -126,6 +126,9 @@ async function handleCreateResource(request, env) {
     await createResource(env, requester_uuid, type, name, description);
   } catch (err) {
     const status = 
+      err.message === "invalid_resource_type" ? 400 :
+      err.message === "invalid_name_length" ? 400 :
+      err.message === "invalid_description_length" ? 400 :
       err.message === "forbidden_action" ? 403 :
       500;
 
