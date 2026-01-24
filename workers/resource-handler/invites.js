@@ -62,3 +62,34 @@ export async function createInvite(env, resource_uuid, requester_uuid, duration,
 
   return invite_code;
 }
+
+/**
+ * Delete an invite code for a resource if requester is the owner (invite creator)
+ */
+export async function deleteInvite(env, invite_code, requester_uuid) {
+  // Fetch invite
+  const invite = await env.PACKSYNCR_DB.prepare(`
+    SELECT creator_uuid
+    FROM resource_invite_codes
+    WHERE invite_code = ?
+  `).bind(invite_code).first();
+
+  if (!invite) {
+    throw new Error("invite_not_found");
+  }
+
+  // Check if requester is able to delete the invite code (invite creator)
+  if (invite.creator_uuid !== requester_uuid) {
+    throw new Error("forbidden_action");
+  }
+
+  // Delete invite
+  await deleteInviteFromCode(env, invite_code);
+}
+
+async function deleteInviteFromCode(env, invite_code) {
+  await env.PACKSYNCR_DB.prepare(`
+    DELETE FROM resource_invite_codes
+    WHERE invite_code = ?
+  `).bind(invite_code).run();
+}
