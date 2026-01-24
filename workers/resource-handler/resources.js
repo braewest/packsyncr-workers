@@ -1,8 +1,8 @@
 /**
  * RESOURCE TYPES:
- * custom: A custom resource type
+ * other: A other resource type
  */
-const RESOURCE_TYPES = ["custom"];
+const RESOURCE_TYPES = ["other"];
 
 // Resource Rules
 const RESOURCE_NAME_MIN_LENGTH = 1;
@@ -54,4 +54,46 @@ export async function createResource(env, requester_uuid, type, name, descriptio
     SET resources_created = resources_created + 1
     WHERE uuid = ?
   `).bind(requester_uuid).run();
+}
+
+export async function updateResource(env, resource_uuid, requester_uuid, name, description) {
+  const now = Math.floor(Date.now() / 1000); // Current unix timestamp in seconds
+
+  // Check rules
+  if (name !== undefined && (name.length < RESOURCE_NAME_MIN_LENGTH || name.length > RESOURCE_NAME_MAX_LENGTH)) {
+    return new Error("invalid_name_length");
+  }
+  if (description !== undefined && description.length > RESOURCE_DESCRIPTION_MAX_LENGTH) {
+    return new Error("invalid_description_length");
+  }
+
+  // Keep list of necessary changes
+  const fields = [];
+  const values = [];
+
+  if (name !== undefined) {
+    fields.push("name = ?");
+    values.push(name);
+  }
+  if (description !== undefined) {
+    fields.push("description = ?");
+    values.push(description);
+  }
+
+  // Update updated_at timestamp
+  fields.push("updated_at = ?");
+  values.push(now);
+
+  values.push(resource_uuid, requester_uuid);
+
+  // Update resource
+  const result = await env.PACKSYNCR_DB.prepare(`
+    UPDATE resources
+    SET ${fields.join(", ")}
+    WHERE resource_uuid = ? AND owner_uuid = ?
+  `).bind(...values).run();
+
+  if (result.changes === 0) {
+    throw new Error("forbidden_action");
+  }
 }
