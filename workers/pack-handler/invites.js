@@ -294,17 +294,6 @@ export async function addResourceToPack(env, pack_uuid, requester_uuid, invite_c
     throw new Error("invite_used_up");
   }
 
-  // Increment resource count
-  try {
-    await env.PACKSYNCR_DB.prepare(`
-        UPDATE resource_packs
-        SET resources_used = resources_used + 1
-        WHERE pack_uuid = ?
-      `).bind(pack_uuid).run();
-  } catch {
-    throw new Error("increment_resource_count_failed");
-  }
-
   // Add resource
   try {
     await env.PACKSYNCR_DB.prepare(`
@@ -319,6 +308,17 @@ export async function addResourceToPack(env, pack_uuid, requester_uuid, invite_c
     throw new Error("redeem_failed");
   }
 
+  // Increment resource count
+  try {
+    await env.PACKSYNCR_DB.prepare(`
+        UPDATE resource_packs
+        SET resources_used = resources_used + 1
+        WHERE pack_uuid = ?
+      `).bind(pack_uuid).run();
+  } catch {
+    throw new Error("increment_resource_count_failed");
+  }
+
   // Increment invite use and check if invite can be deleted
   if (invite.max_uses !== -1 && invite.uses + 1 >= invite.max_uses) {
     await deleteInviteFromResourceCode(env, invite_code);
@@ -330,6 +330,58 @@ export async function addResourceToPack(env, pack_uuid, requester_uuid, invite_c
       WHERE invite_code = ?
     `).bind(invite_code).run();
   }
+}
+
+/**
+ * Remove a resource from a pack if requester has authorization (collaborator that added it or admin).
+ */
+export async function removeResourceFromPack(env, pack_uuid, resource_uuid, requester_uuid) {
+  // Fetch resource and pack link
+  const resource = await env.PACKSYNCR_DB.prepare(`
+    SELECT added_by
+    FROM pack_resources
+    WHERE pack_uuid = ? AND resource_uuid = ?
+  `).bind(pack_uuid, resource_uuid).first();
+
+  if (!resource) {
+    throw new Error("pack_resource_not_found");
+  }
+
+  // Retrieve user to check auhtority level
+  const user = await env.PACKSYNCR_DB.prepare(`
+    SELECT role
+    FROM pack_collaborators
+    WHERE pack_uuid = ? AND user_uuid = ?
+  `).bind(pack_uuid, requester_uuid).first();
+
+  if (!user) {
+    throw new Error("user_not_found");
+  }
+
+  // Check user's authority level
+  const isAdmin = ROLE_PRIORITY[user.role] >= ROLE_PRIORITY["admin"];
+  const isAdderCollaborator = resource.added_by === requester_uuid && ROLE_PRIORITY[user.role] >= ROLE_PRIORITY["collaborator"]
+
+  if (!isAdmin && !isAdderCollaborator) {
+    throw new Error("unauthorized_action");
+  }
+
+  // Remove resource from pack
+  const result = await env.PACKSYNCR_DB.prepare(`
+    DELETE FROM pack_resources
+    WHERE pack_uuid = ? AND resource_uuid = ?
+  `).bind(pack_uuid, resource_uuid).run();
+
+  if (result.meta.changes !== 1) {
+    throw new Error("remove_failed");
+  }
+
+  // Decrement resource count
+  await env.PACKSYNCR_DB.prepare(`
+    UPDATE resource_packs
+    SET resources_used = resources_used - 1
+    WHERE pack_uuid = ? AND resources_used > 0
+  `).bind(pack_uuid).run();
 }
 
 // Deletes resource invite code
