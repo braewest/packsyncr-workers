@@ -2,6 +2,11 @@
 const MANIFEST_LOCATION_PREFIX = "packs/";
 const MANIFEST_LOCATION_POSTFIX = "-manifest.json";
 
+// Pack Rules
+const PACK_NAME_MIN_LENGTH = 1;
+const PACK_NAME_MAX_LENGTH = 64;
+const PACK_DESCRIPTION_MAX_LENGTH = 256;
+
 /**
  * Create the new resource pack in the packsyncr database, along with an empty pack manifest
  */
@@ -9,23 +14,32 @@ export async function createPack(env, owner_uuid, name, description) {
   const pack_uuid = crypto.randomUUID();
   const created_at = Math.floor(Date.now() / 1000); // Current unix timestamp in seconds
 
-    await env.PACKSYNCR_DB.prepare(`
-      INSERT INTO resource_packs (
-        pack_uuid,
-        owner_uuid,
-        name,
-        description,
-        created_at,
-        updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `).bind(
+  // Check rules
+  if (name.length < PACK_NAME_MIN_LENGTH || name.length > PACK_NAME_MAX_LENGTH) {
+    return new Error("invalid_name_length");
+  }
+  if (description !== undefined && description.length > PACK_DESCRIPTION_MAX_LENGTH) {
+    return new Error("invalid_description_length");
+  }
+
+  // Create resource pack
+  await env.PACKSYNCR_DB.prepare(`
+    INSERT INTO resource_packs (
       pack_uuid,
       owner_uuid,
       name,
-      description ?? null,
+      description,
       created_at,
-      created_at // Updated at creation time
-    ).run();
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).bind(
+    pack_uuid,
+    owner_uuid,
+    name,
+    description ?? null,
+    created_at,
+    created_at // Updated at creation time
+  ).run();
 
   // Update user's packs_created count
   await env.PACKSYNCR_DB.prepare(`
@@ -89,6 +103,16 @@ export async function updatePack(env, {
     description
   }) {
   const now = Math.floor(Date.now() / 1000); // Current unix timestamp in seconds
+
+  // Check rules
+  if (name !== undefined && (name.length < PACK_NAME_MIN_LENGTH || name.length > PACK_NAME_MAX_LENGTH)) {
+    return new Error("invalid_name_length");
+  }
+  if (description !== undefined && description.length > PACK_DESCRIPTION_MAX_LENGTH) {
+    return new Error("invalid_description_length");
+  }
+  
+  // Keep list of necessary changes
   const fields = [];
   const values = [];
 
