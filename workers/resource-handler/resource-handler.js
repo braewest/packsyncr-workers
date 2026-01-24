@@ -6,10 +6,11 @@
  * 
  * Endpoints:
  * - POST /create-resource (frontend)
+ * - POST /update-resource (frontend)
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
-import { createResource } from "./resources.js";
+import { createResource, updateResource } from "./resources.js";
 
 const FRONTEND_ORIGIN = "https://www.packsyncr.com";
 const CORS_HEADERS = {
@@ -34,6 +35,9 @@ export default {
       // Request Handler
       if (path === "/create-resource" && request.method === "POST") {
         return await handleCreateResource(request, env);
+      }
+      if (path === "/update-resource" && request.method === "POST") {
+        return await handleUpdateResource(request, env);
       }
       return new Response("Not found", {
         status: 404,
@@ -141,6 +145,88 @@ async function handleCreateResource(request, env) {
   // Resource has been created
   return new Response(JSON.stringify({ success: true }), {
     status: 201,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /update-resource
+ * Called by frontend to update an existing resource.
+ * Authorization: Bearer <access_token>
+ */
+async function handleUpdateResource(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve resource_uuid, name and/or description
+  const { resource_uuid, name, description } = body;
+  if (!resource_uuid || typeof resource_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_resource_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+  if (name === undefined && description === undefined) {
+    return new Response(JSON.stringify({ error: "invalid_fields" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+  if (name !== undefined && typeof name !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_name" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+  if (description !== undefined && typeof description !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_description" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Update resource information
+  try {
+    await updateResource(env, resource_uuid, requester_uuid, name, description);
+  } catch (err) {
+    const status = 
+      err.message === "invalid_fields" ? 400 :
+      err.messgae === "invalid_name_length" ? 400 :
+      err.message === "invalid_description_length" ? 400 :
+      err.message === "forbidden_action" ? 403 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Resource has been updated
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
     headers: CORS_HEADERS
   });
 }
