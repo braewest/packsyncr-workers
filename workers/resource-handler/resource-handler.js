@@ -80,8 +80,14 @@ async function handleCreateResource(request, env) {
     });
   }
 
-  // Retrieve name (required) and description (optional)
-  const { name, description } = body;
+  // Retrieve type (optional), name (required), and description (optional)
+  const { type, name, description } = body;
+  if (type !== undefined && typeof type !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_type"}), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
   if (!name || typeof name !== "string") {
     return new Response(JSON.stringify({ error: "invalid_name"}), {
       status: 400,
@@ -117,7 +123,7 @@ async function handleCreateResource(request, env) {
 
   // Create resource
   try {
-    await createResource(env, requester_uuid, name, description);
+    await createResource(env, requester_uuid, type, name, description);
   } catch (err) {
     const status = 
       err.message === "forbidden_action" ? 403 :
