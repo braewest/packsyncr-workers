@@ -445,6 +445,7 @@ async function handleDeleteInvite(request, env) {
  * /upload-file
  * Called by frontend to upload a file to a resource using multipart form data.
  * Authorization: Bearer <access_token>
+ * Content-Type: multipart/form-data; boundary=<boundary>
  */
 async function handleUploadFile(request, env) {
   // Extract access token payload
@@ -461,28 +462,32 @@ async function handleUploadFile(request, env) {
   // Retrieve uuid
   const requester_uuid = payload.sub;
 
-  const contentType = request.headers.get("content-type") || "";
-  if (!contentType.includes("multipart/form-data")) {
+  // Get request body
+  const request_body = request.body;
+  if (!request_body) {
+    throw new Error("invalid_body");
+  }
+
+  // Ensure request is multipart/form-data
+  const content_type = request.headers.get("content-type") || "";
+  if (!content_type.includes("multipart/form-data")) {
     return new Response(JSON.stringify({ error: "invalid_content_type" }), {
       status: 400,
       headers: CORS_HEADERS
     });
   }
 
-  let form;
-  try {
-    form = await request.formData();
-  } catch {
-    return new Response(JSON.stringify({ error: "invalid_form_data" }), {
-      status: 400,
-      headers: CORS_HEADERS
-    });
-  }
+  // Get boundary
+  const match = content_type.match(/boundary=(.+)$/);
+  const boundary = "--" + match[1];
 
+  let testString;
   try {
-    await uploadFile(env, requester_uuid, form);
+    // Pass the raw request body stream to uploadFile
+    testString = await uploadFile(env, requester_uuid, request_body, boundary);
   } catch (err) {
     const status = 
+      err.message === "invalid_body" ? 400 :
       err.message === "forbidden_action" ? 403 :
       500;
 
@@ -491,4 +496,10 @@ async function handleUploadFile(request, env) {
       headers: CORS_HEADERS
     });
   }
+
+  // File has been uploaded
+  return new Response(JSON.stringify({ success: testString }), {
+    status: 201,
+    headers: CORS_HEADERS
+  });
 }
