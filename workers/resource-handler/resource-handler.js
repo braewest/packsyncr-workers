@@ -11,11 +11,14 @@
  * 
  * - POST /create-invite (frontend)
  * - POST /delete-invite (frontend)
+ * 
+ * - POST /upload-file (frontend)
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
 import { createResource, updateResource, deleteResource } from "./resources.js";
 import { createInvite, deleteInvite } from "./invites.js";
+import { uploadFile } from "./files.js";
 
 const FRONTEND_ORIGIN = "https://www.packsyncr.com";
 const CORS_HEADERS = {
@@ -52,6 +55,9 @@ export default {
       }
       if (path === "/delete-invite" && request.method === "POST") {
         return await handleDeleteInvite(request, env);
+      }
+      if (path === "/upload-file" && request.method === "POST") {
+        return await handleUploadFile(request, env);
       }
       return new Response("Not found", {
         status: 404,
@@ -422,10 +428,10 @@ async function handleDeleteInvite(request, env) {
       err.message === "resource_not_found" ? 404 :
       500;
 
-      return new Response(JSON.stringify({ error: err.message }), {
-        status,
-        headers: CORS_HEADERS
-      });
+    return new Response(JSON.stringify({ error: err.message }), {
+      status,
+      headers: CORS_HEADERS
+    });
   }
 
   // Invite has been deleted
@@ -433,4 +439,56 @@ async function handleDeleteInvite(request, env) {
     status: 200,
     headers: CORS_HEADERS
   });
+}
+
+/**
+ * /upload-file
+ * Called by frontend to upload a file to a resource using multipart form data.
+ * Authorization: Bearer <access_token>
+ */
+async function handleUploadFile(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid
+  const requester_uuid = payload.sub;
+
+  const contentType = request.headers.get("content-type") || "";
+  if (!contentType.includes("multipart/form-data")) {
+    return new Response(JSON.stringify({ error: "invalid_content_type" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  let form;
+  try {
+    form = await request.formData();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_form_data" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  try {
+    await uploadFile(env, requester_uuid, form);
+  } catch (err) {
+    const status = 
+      err.message === "forbidden_action" ? 403 :
+      500;
+
+    return new Response(JSON.stringify({ error: err.message }), {
+      status,
+      headers: CORS_HEADERS
+    });
+  }
 }
