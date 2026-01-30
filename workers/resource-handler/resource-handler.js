@@ -488,7 +488,15 @@ async function handleUploadFile(request, env) {
   } catch (err) {
     const status = 
       err.message === "invalid_body" ? 400 :
+      err.message === "missing_resource_uuid" ? 400 :
+      err.message === "missing_file_directory" ? 400 :
+      err.message === "missing_file_name" ? 400 :
+      err.message === "missing_content_type" ? 400 :
       err.message === "forbidden_action" ? 403 :
+      err.message === "forbidden_content_type" ? 403 :
+      err.message === "forbidden_file_directory" ? 403 :
+      err.message === "resource_not_found" ? 404 :
+      err.message === "undefined_resource_type" ? 500 :
       500;
 
     return new Response(JSON.stringify({ error: err.message }), {
