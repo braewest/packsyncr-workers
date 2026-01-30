@@ -1,3 +1,19 @@
+/**
+ * List of all resource types and what content_types and file_directories are allowed
+ */
+const RESOURCE_RULES = {
+  "hat": { // TODO: Add additive json files
+    allowed_content_types: {
+      "image/png": {
+        allowed_directories: ["textures/item/carved_pumpkin"]
+      },
+      "application/json": {
+        allowed_directories: ["models/item/carved_pumpkin"]
+      }
+    }
+  }
+};
+
 const BUFFER_SIZE = 2 * 1024; // 2 KB
 
 /**
@@ -10,9 +26,35 @@ export async function uploadFile(env, requester_uuid, requestBody, boundary) {
 
   // Retrieve multipart fields
   const resource_uuid = await getMultipartField(reader, state, boundary, "resource_uuid");
+  const content_type = await getMultipartField(reader, state, boundary, "content_type");
   const file_directory = await getMultipartField(reader, state, boundary, "file_directory");
   const file_name = await getMultipartField(reader, state, boundary, "file_name");
-  const content_type = await getMultipartField(reader, state, boundary, "content_type");
+
+  // Fetch resource from database
+  const resource = await fetchResource(env, resource_uuid);
+  if (!resource) throw new Error("resource_not_found");
+
+  // Check if user owns resource
+  if (resource.owner_uuid !== requester_uuid) throw new Error("forbidden_action");
+
+  // Check if content_type and file_directory are valid of resource type
+  const rules = RESOURCE_RULES[resource.type];
+  if (!rules) throw new Error("undefined_resource_type");
+  const contentRules = rules.allowed_content_types[content_type];
+  if (!contentRules) throw new Error("forbidden_content_type");
+  if (!contentRules.allowed_directories.includes(file_directory)) throw new Error("forbidden_file_directory");
+}
+
+/**
+ * Fetch resource from database
+ */
+async function fetchResource(env, resource_uuid) {
+  const resource = await env.PACKSYNCR_DB.prepare(`
+    SELECT *
+    FROM resources
+    WHERE resource_uuid = ?
+  `).bind(resource_uuid).first();
+  return resource;
 }
 
 /**
