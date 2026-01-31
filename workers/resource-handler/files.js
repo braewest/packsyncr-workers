@@ -52,8 +52,13 @@ export async function uploadFile(env, requester_uuid, requestBody, boundary) {
   } catch (err) {
     throw new Error(err.message);
   }
-
-  return file;
+  
+  // Upload file to R2 and link to resource in D1
+  try {
+    await uploadFileToR2(env, requester_uuid, file, resource_uuid, file_directory, file_name, content_type);
+  } catch (err) {
+    throw new Error(err.message);
+  }
 }
 
 /**
@@ -242,5 +247,54 @@ function verifyMagic(contentType, bytes) {
 
     default:
       return false;
+  }
+}
+
+/**
+ * Uplaod file into R2 and link file to resource in D1
+ */
+async function uploadFileToR2(env, requester_uuid, file_bytes, resource_uuid, file_directory, file_name, content_type) {
+  const file_uuid = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000); // Current unix timestamp in seconds
+  const r2Key = `${resource_uuid}/${file_uuid}`;
+
+  // Upload file to R2
+  try {
+    await env.RESOURCE_BUCKET.put(r2Key, file_bytes.buffer, {
+      httpMetadata: { contentType: content_type }
+    });
+  } catch {
+    throw new Error("r2_upload_failed");
+  }
+
+  // Link to resource in D1
+  try {
+    await env.PACKSYNCR_DB.prepare(`
+      INSERT INTO resource_files (
+        resource_uuid,
+        file_uuid,
+        file_directory,
+        file_name,
+        r2_key,
+        content_type,
+        uploaded_by,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      resource_uuid,
+      file_uuid,
+      file_directory,
+      file_name,
+      r2Key,
+      content_type,
+      requester_uuid,
+      now,
+      now // updated_at same as creation time
+    ).run();
+  } catch {
+    // Rollback R2 if needed
+    await env.RESOURCE_BUCKET.delete(r2Key);
+    throw new Error("d1_upload_failed");
   }
 }
