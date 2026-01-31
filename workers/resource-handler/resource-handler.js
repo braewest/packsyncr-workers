@@ -500,6 +500,8 @@ async function handleUploadFile(request, env) {
       err.message === "resource_not_found" ? 404 :
       err.message === "file_too_large" ? 413 :
       err.message === "undefined_resource_type" ? 500 :
+      err.message === "r2_upload_failed" ? 500 :
+      err.message === "d1_upload_failed" ? 500 :
       500;
 
     return new Response(JSON.stringify({ error: err.message }), {
