@@ -14,6 +14,7 @@ const RESOURCE_RULES = {
   }
 };
 
+const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2 MB
 const BUFFER_SIZE = 2 * 1024; // 2 KB
 
 /**
@@ -43,6 +44,16 @@ export async function uploadFile(env, requester_uuid, requestBody, boundary) {
   const contentRules = rules.allowed_content_types[content_type];
   if (!contentRules) throw new Error("forbidden_content_type");
   if (!contentRules.allowed_directories.includes(file_directory)) throw new Error("forbidden_file_directory");
+
+  // Retrieve file if passes validation
+  let file;
+  try {
+    file = await extractAndVerifyFile(reader, state, boundary, "file", content_type);
+  } catch (err) {
+    throw new Error(err.message);
+  }
+
+  return file;
 }
 
 /**
@@ -90,7 +101,7 @@ async function getMultipartField(reader, state, boundary, fieldName) {
       state.buffer = state.buffer.slice(-BUFFER_SIZE);
     }
 
-    // Get next chunk
+    // Read next chunk
     const { done, value } = await reader.read();
     if (done) break;
 
@@ -103,4 +114,133 @@ async function getMultipartField(reader, state, boundary, fieldName) {
   }
 
   return fieldValue;
+}
+
+/**
+ * Extract file from upload and verify it meets the upload requirements
+ */
+async function extractAndVerifyFile(reader, state, boundary, fieldName, content_type) {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  const targetHeader = `name="${fieldName}"`;
+
+  let bytesRead = 0;
+  let magicBytes = new Uint8Array(0);
+  let fileBytes = [];
+  let fileStarted = false;
+
+  while (true) {
+    // If file is not started, search for header
+    let contentRest;
+    if (!fileStarted) {
+      // Seach for file part header (check existing buffer)
+      const headerIndex = state.buffer.indexOf(targetHeader);
+      if (headerIndex !== -1) { // header found
+        const afterHeader = state.buffer.slice(headerIndex);
+        const match = afterHeader.match(/\r?\n\r?\n/);
+        if (match) {
+          // Retreive file data starting point and start file
+          contentRest = afterHeader.slice(match.index + match[0].length);
+          fileStarted = true;
+        }
+      }
+    } else {
+      contentRest = state.buffer;
+    }
+
+    // If file is started, record bytes until boundary or invalid size
+    if (fileStarted) {
+      // Get chunk bytes and check for boundary
+      const boundaryIndex = contentRest.indexOf(boundary);
+      let chunkText = contentRest;
+      if (boundaryIndex !== -1) {
+        chunkText = contentRest.slice(0, boundaryIndex);
+      }
+      const chunkBytes = encoder.encode(chunkText);
+
+      // Capture magic bytes if needed (first 32 bytes)
+      if (magicBytes.length < 32) {
+        const needed = 32 - magicBytes.length;
+        magicBytes = concatUint8(
+          magicBytes,
+          chunkBytes.slice(0, needed)
+        );
+      }
+
+      // Update and check file size
+      bytesRead += chunkBytes.length;
+      if (bytesRead > MAX_FILE_SIZE) {
+        throw new Error("file_too_large");
+      }
+
+      // Record bytes
+      fileBytes.push(chunkBytes);
+
+      // Remove everything recorded
+      state.buffer = contentRest.slice(chunkBytes.length);
+    }
+
+    // Keep buffer small to avoid large memory usage
+    if (state.buffer.length > BUFFER_SIZE) {
+      state.buffer = state.buffer.slice(-BUFFER_SIZE);
+    }
+
+    // Read next chunk
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    // Decode chunk to text and append to buffer
+    state.buffer += decoder.decode(value, { stream: true });
+  }
+
+  // Check if file was found
+  if (!fileStarted) {
+    throw new Error(`missing_${fieldName}`);
+  }
+
+  // Verify file matches declared content_type
+  if (!verifyMagic(content_type, magicBytes)) {
+    throw new Error("file_type_mismatch");
+  }
+
+  return concatMany(fileBytes);
+}
+
+function concatUint8(a, b) {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a);
+  out.set(b, a.length);
+  return out;
+}
+
+function concatMany(chunks) {
+  const total = chunks.reduce((s, c) => s + c.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.length;
+  }
+  return out;
+}
+
+function verifyMagic(contentType, bytes) {
+  switch (contentType) {
+    case "image/png":
+      return (
+        bytes.length >= 8 &&
+        bytes[0] === 0x89 &&
+        bytes[1] === 0x50 &&
+        bytes[2] === 0x4E &&
+        bytes[3] === 0x47
+      );
+
+    case "application/json": {
+      const text = new TextDecoder().decode(bytes).trim();
+      return text.startsWith("{") || text.startsWith("[");
+    }
+
+    default:
+      return false;
+  }
 }
