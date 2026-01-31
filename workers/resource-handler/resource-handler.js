@@ -492,10 +492,13 @@ async function handleUploadFile(request, env) {
       err.message === "missing_file_directory" ? 400 :
       err.message === "missing_file_name" ? 400 :
       err.message === "missing_content_type" ? 400 :
+      err.message === "missing_file" ? 400 :
+      err.message === "file_type_mismatch" ? 400 :
       err.message === "forbidden_action" ? 403 :
       err.message === "forbidden_content_type" ? 403 :
       err.message === "forbidden_file_directory" ? 403 :
       err.message === "resource_not_found" ? 404 :
+      err.message === "file_too_large" ? 413 :
       err.message === "undefined_resource_type" ? 500 :
       500;
 
