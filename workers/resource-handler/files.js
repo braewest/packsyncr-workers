@@ -298,3 +298,50 @@ async function uploadFileToR2(env, requester_uuid, file_bytes, resource_uuid, fi
     throw new Error("d1_upload_failed");
   }
 }
+
+/**
+ * Delete file from R2
+ */
+export async function deleteFile(env, requester_uuid, resource_uuid, file_uuid) {
+  // Fetch file from database
+  const file = await fetchFile(env, resource_uuid, file_uuid);
+  if (!file) throw new Error("file_not_found");
+
+  // Check if user owns file
+  if (file.uploaded_by !== requester_uuid) throw new Error("forbidden_action");
+
+  // Delete file in R2 and D1
+  try {
+    await deleteFileFromR2(env, file.r2_key, resource_uuid, file_uuid);
+  } catch (err) {
+    throw new Error(err.message);
+  }
+}
+
+async function fetchFile(env, resource_uuid, file_uuid) {
+  const file = await env.PACKSYNCR_DB.prepare(`
+    SELECT *
+    FROM resource_files
+    WHERE resource_uuid = ? AND file_uuid = ?
+  `).bind(resource_uuid, file_uuid).first();
+  return file;
+}
+
+async function deleteFileFromR2(env, r2_key, resource_uuid, file_uuid) {
+  // Delete file from R2
+  try {
+    await env.RESOURCE_BUCKET.delete(r2_key);
+  } catch {
+    throw new Error("r2_delete_failed");
+  }
+
+  // Delete file from D1
+  try {
+    await env.PACKSYNCR_DB.prepare(`
+      DELETE FROM resource_files
+      WHERE resource_uuid = ? AND file_uuid = ?
+    `).bind(resource_uuid, file_uuid).run();
+  } catch {
+    throw new Error("d1_delete_failed");
+  }
+}
