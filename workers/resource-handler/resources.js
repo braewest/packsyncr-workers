@@ -1,8 +1,10 @@
+import { deleteResourceFiles } from "./files.js";
+
 /**
  * RESOURCE TYPES:
- * other: A other resource type
+ * hat: wearable carved pumpkin
  */
-const RESOURCE_TYPES = ["other"];
+const RESOURCE_TYPES = ["hat"];
 
 // Resource Rules
 const RESOURCE_NAME_MIN_LENGTH = 1;
@@ -102,17 +104,35 @@ export async function updateResource(env, resource_uuid, requester_uuid, name, d
 }
 
 /**
- * Delete an existing resource owned by the requester
+ * Delete an existing resource owned by the requester. Delete associated files in R2.
  */
 export async function deleteResource(env, resource_uuid, requester_uuid) {
-  // Delete resource
-  const result = await env.PACKSYNCR_DB.prepare(`
-    DELETE FROM resources
-    WHERE resource_uuid = ? AND owner_uuid = ?
-  `).bind(resource_uuid, requester_uuid).run();
+  // Get resource
+  const resource = await env.PACKSYNCR_DB.prepare(`
+    SELECT *
+    FROM resources
+    WHERE resource_uuid = ?
+  `).bind(resource_uuid).first();
 
-  if (result.meta.changes === 0) {
-    throw new Error("forbidden_action");
+  // Check if resource exists and requester owns the resource
+  if (!resource) throw new Error("resource_not_found");
+  if (resource.owner_uuid !== requester_uuid) throw new Error("forbidden_action");
+
+  // Delete all files in resource
+  try {
+    await deleteResourceFiles(env, resource_uuid);
+  } catch (err) {
+    throw new Error(err.message);
+  }
+
+  // Delete resource
+  try {
+    const result = await env.PACKSYNCR_DB.prepare(`
+      DELETE FROM resources
+      WHERE resource_uuid = ? AND owner_uuid = ?
+    `).bind(resource_uuid, requester_uuid).run();
+  } catch {
+    throw new Error("resource_delete_failed");
   }
 
   // Decrement user's resource count
