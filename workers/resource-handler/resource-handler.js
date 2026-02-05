@@ -13,12 +13,13 @@
  * - POST /delete-invite (frontend)
  * 
  * - POST /upload-file (frontend)
+ * - POST /delete-file (frontend)
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
 import { createResource, updateResource, deleteResource } from "./resources.js";
 import { createInvite, deleteInvite } from "./invites.js";
-import { uploadFile } from "./files.js";
+import { uploadFile, deleteFile } from "./files.js";
 
 const FRONTEND_ORIGIN = "https://www.packsyncr.com";
 const CORS_HEADERS = {
@@ -58,6 +59,9 @@ export default {
       }
       if (path === "/upload-file" && request.method === "POST") {
         return await handleUploadFile(request, env);
+      }
+      if (path === "/delete-file" && request.method === "POST") {
+        return await handleDeleteFile(request, env);
       }
       return new Response("Not found", {
         status: 404,
@@ -484,7 +488,7 @@ async function handleUploadFile(request, env) {
   let testString;
   try {
     // Pass the raw request body stream to uploadFile
-    testString = await uploadFile(env, requester_uuid, request_body, boundary);
+    await uploadFile(env, requester_uuid, request_body, boundary);
   } catch (err) {
     const status = 
       err.message === "invalid_body" ? 400 :
@@ -513,6 +517,76 @@ async function handleUploadFile(request, env) {
   // File has been uploaded
   return new Response(JSON.stringify({ success: testString }), {
     status: 201,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /delete-file
+ * Called by frontend to delete an existing file if requester owns it.
+ * Authorization: Bearer <access_token>
+ */
+async function handleDeleteFile(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve resource_uuid and file_uuid
+  const { resource_uuid, file_uuid } = body;
+  if (!resource_uuid || typeof resource_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_resource_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+  if (!file_uuid || typeof file_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_file_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Delete file
+  try {
+    await deleteFile(env, requester_uuid, resource_uuid, file_uuid);
+  } catch (err) {
+    const status = 
+      err.message === "forbidden_action" ? 403 :
+      err.message === "file_not_found" ? 404 :
+      err.message === "r2_delete_failed" ? 500 :
+      err.message === "d1_delete_failed" ? 500 :
+      500;
+
+    return new Response(JSON.stringify({ error: err.message }), {
+      status,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // File has been deleted
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
     headers: CORS_HEADERS
   });
 }
