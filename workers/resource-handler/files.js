@@ -251,7 +251,7 @@ function verifyMagic(contentType, bytes) {
 }
 
 /**
- * Uplaod file into R2 and link file to resource in D1
+ * Upload file into R2 and link file to resource in D1
  */
 async function uploadFileToR2(env, requester_uuid, file_bytes, resource_uuid, file_directory, file_name, content_type) {
   const file_uuid = crypto.randomUUID();
@@ -327,6 +327,9 @@ async function fetchFile(env, resource_uuid, file_uuid) {
   return file;
 }
 
+/**
+ * Delete file from R2 and D1.
+ */
 async function deleteFileFromR2(env, r2_key, resource_uuid, file_uuid) {
   // Delete file from R2
   try {
@@ -343,5 +346,29 @@ async function deleteFileFromR2(env, r2_key, resource_uuid, file_uuid) {
     `).bind(resource_uuid, file_uuid).run();
   } catch {
     throw new Error("d1_delete_failed");
+  }
+}
+
+/**
+ * Delete all files associated with a resource from R2 and D1
+ */
+export async function deleteResourceFiles(env, resource_uuid) {
+  // Fetch all files linked to the resource
+  const files = await env.PACKSYNCR_DB.prepare(`
+    SELECT file_uuid, r2_key
+    FROM resource_files
+    WHERE resource_uuid = ?
+  `).bind(resource_uuid).all();
+  
+  // Check if there are files to delete
+  if (!files.results.length) return;
+
+  // Delete each file from R2 and D1
+  for (const file of files.results) {
+    try {
+      await deleteFileFromR2(env, file.r2_key, resource_uuid, file.file_uuid);
+    } catch (err) {
+      throw new Error(err.message);
+    }
   }
 }
