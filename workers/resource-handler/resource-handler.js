@@ -108,9 +108,9 @@ async function handleCreateResource(request, env) {
     });
   }
 
-  // Retrieve type (optional), name (required), and description (optional)
+  // Retrieve type (required), name (required), and description (optional)
   const { type, name, description } = body;
-  if (type !== undefined && typeof type !== "string") {
+  if (!type || typeof type !== "string") {
     return new Response(JSON.stringify({ error: "invalid_type"}), {
       status: 400,
       headers: CORS_HEADERS
