@@ -257,7 +257,7 @@ async function handleUpdateResource(request, env) {
 
 /**
  * /delete-resource
- * Called by frontend to delete an existing resource owner by the requester.
+ * Called by frontend to delete an existing resource owner by the requester. Will also delete all associated files in R2 and D1.
  * Authorization: Bearer <access_token>
  */
 async function handleDeleteResource(request, env) {
@@ -301,6 +301,10 @@ async function handleDeleteResource(request, env) {
   } catch (err) {
     const status = 
       err.message === "forbidden_action" ? 403 :
+      err.message === "resource_not_found" ? 404 :
+      err.message === "resource_delete_failed" ? 500 :
+      err.message === "r2_delete_failed" ? 500 :
+      err.message === "d1_delete_failed" ? 500 :
       500;
 
       return new Response(JSON.stringify({ error: err.message }), {
