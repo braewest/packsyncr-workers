@@ -7,6 +7,8 @@
  * Endpoints:
  * - POST /create-resource (frontend)
  * - POST /update-resource (frontend)
+ * - POST /get-resource (frontend)
+ * - GET /get-my-resources (frontend)
  * - POST /delete-resource (frontend)
  * 
  * - POST /create-invite (frontend)
@@ -17,7 +19,7 @@
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
-import { createResource, updateResource, deleteResource } from "./resources.js";
+import { createResource, updateResource, getResource, getMyResources, deleteResource } from "./resources.js";
 import { createInvite, deleteInvite } from "./invites.js";
 import { uploadFile, deleteFile } from "./files.js";
 
@@ -47,6 +49,12 @@ export default {
       }
       if (path === "/update-resource" && request.method === "POST") {
         return await handleUpdateResource(request, env);
+      }
+      if (path === "/get-resource" && request.method === "POST") {
+        return await handleGetResource(request, env);
+      }
+      if (path === "/get-my-resources" && request.method === "GET") {
+        return await handleGetMyResources(request, env);
       }
       if (path === "/delete-resource" && request.method === "POST") {
         return await handleDeleteResource(request, env);
@@ -250,6 +258,103 @@ async function handleUpdateResource(request, env) {
 
   // Resource has been updated
   return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /get-resource
+ * Called by frontend to retrieve an existing resource.
+ * Authorization: Bearer <access_token>
+ */
+async function handleGetResource(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve resource_uuid
+  const { resource_uuid } = body;
+  if (!resource_uuid || typeof resource_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_resource_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  let result;
+  try {
+    result = await getResource(env, resource_uuid, requester_uuid);
+  } catch (err) {
+    const status =
+      err.message === "forbidden_action" ? 403 :
+      err.message === "resource_not_found" ? 404 :
+      500;
+
+    return new Response(JSON.stringify({ error: err.message }), {
+      status,
+      headers: CORS_HEADERS
+    });
+  }
+
+  return new Response(JSON.stringify(result), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /get-my-resources
+ * Called by frontend to retrieve an existing resource.
+ * Authorization: Bearer <access_token>
+ */
+async function handleGetMyResources(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid
+  const requester_uuid = payload.sub;
+
+  let resources;
+  try {
+    resources = await getMyResources(env, requester_uuid);
+  } catch (err) {
+      return new Response(JSON.stringify({ error: err.message }), {
+        status: 500,
+        headers: CORS_HEADERS
+      });
+  }
+
+  return new Response(JSON.stringify({ resources }), {
     status: 200,
     headers: CORS_HEADERS
   });
