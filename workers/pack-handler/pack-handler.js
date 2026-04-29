@@ -56,7 +56,7 @@ export default {
       if (path === "/get-pack" && request.method === "POST") {
         return await handleGetPack(request, env);
       }
-      if (path === "/get-my-pack" && request.method === "GET") {
+      if (path === "/get-my-packs" && request.method === "GET") {
         return await handleGetMyPacks(request, env);
       }
       if (path === "/delete-pack" && request.method === "POST") {
