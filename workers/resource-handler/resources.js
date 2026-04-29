@@ -104,6 +104,41 @@ export async function updateResource(env, resource_uuid, requester_uuid, name, d
 }
 
 /**
+ * Get an existing resource.
+ */
+export async function getResource(env, resource_uuid, requester_uuid) {
+  const resource = await env.PACKSYNCR_DB.prepare(`
+    SELECT *
+    FROM resources
+    WHERE resource_uuid = ?  
+  `).bind(resource_uuid).first();
+
+  if (!resource) throw new Error("resource_not_found");
+  if (resource.owner_uuid !== requester_uuid) throw new Error("forbidden_action");
+
+  const { results: files } = await env.PACKSYNCR_DB.prepare(`
+    SELECT file_uuid, file_directory, file_name, content_type, uploaded_by, created_at, updated_at
+    FROM resource_files
+    WHERE resource_uuid = ?
+  `).bind(resource_uuid).all();
+
+  return { resource, files };
+}
+
+/**
+ * Get a list of all resources user owns.
+ */
+export async function getMyResources(env, requester_uuid) {
+  const { results } = await env.PACKSYNCR_DB.prepare(`
+    SELECT resource_uuid, type, name, description, created_at, updated_at
+    FROM resources
+    WHERE owner_uuid = ?  
+  `).bind(requester_uuid).all();
+
+  return results;
+}
+
+/**
  * Delete an existing resource owned by the requester. Delete associated files in R2.
  */
 export async function deleteResource(env, resource_uuid, requester_uuid) {
