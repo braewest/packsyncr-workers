@@ -8,6 +8,7 @@
  * - POST /create-pack (frontend)
  * - POST /update-pack (frontend)
  * - POST /get-pack (frontend)
+ * - GET /get-my-packs (frontend)
  * - POST /delete-pack (frontend)
  * 
  * - POST /create-invite (frontend)
@@ -21,7 +22,7 @@
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
-import { createPack, updatePack, getPack, deletePack } from "./packs.js"
+import { createPack, updatePack, getPack, getMyPacks, deletePack } from "./packs.js"
 import { createPackInvite, redeemPackInvite, deleteInvite, addResourceToPack, removeResourceFromPack } from "./invites.js"
 import { unfollowPack } from "./users.js"
 
@@ -54,6 +55,9 @@ export default {
       }
       if (path === "/get-pack" && request.method === "POST") {
         return await handleGetPack(request, env);
+      }
+      if (path === "/get-my-pack" && request.method === "GET") {
+        return await handleGetMyPacks(request, env);
       }
       if (path === "/delete-pack" && request.method === "POST") {
         return await handleDeletePack(request, env);
@@ -324,6 +328,44 @@ async function handleGetPack(request, env) {
 
   // Pack has been found
   return new Response(JSON.stringify(result), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /get-my-packs
+ * Called by frontend to retrieve a list of user's packs and followed packs.
+ * Authorization: Bearer <access_token>
+ */
+async function handleGetMyPacks(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve pack list
+  let packs;
+  try {
+    packs = await getMyPacks(env, requester_uuid);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Successfully retrieved pack list
+  return new Response(JSON.stringify({ packs }), {
     status: 200,
     headers: CORS_HEADERS
   });
