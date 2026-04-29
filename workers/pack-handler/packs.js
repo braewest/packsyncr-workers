@@ -222,6 +222,24 @@ export async function getPack(env, pack_uuid, requester_uuid) {
 }
 
 /**
+ * Get list of resource packs that user owns or follows.
+ */
+export async function getMyPacks(env, requester_uuid) {
+  const { results } = await env.PACKSYNCR_DB.prepare(`
+    SELECT rp.pack_uuid, rp.name, rp.description, rp.owner_uuid, rp.created_at, rp.updated_at, rp.resources_used, rp.resources_limit, 'owner' AS user_role
+    FROM resource_packs rp
+    WHERE rp.owner_uuid = ?
+    UNION ALL
+    SELECT rp.pack_uuid, rp.name, rp.description, rp.owner_uuid, rp.created_at, rp.updated_at, rp.resources_used, rp.resources_limit, pc.role AS user_role
+    FROM resource_packs rp
+    JOIN pack_collaborators pc ON rp.pack_uuid = pc.pack_uuid
+    WHERE pc.user_uuid = ?
+  `).bind(requester_uuid, requester_uuid).all();
+
+  return results;
+}
+
+/**
  * Delete a resource pack.
  */
 export async function deletePack(env, packInfo) {
