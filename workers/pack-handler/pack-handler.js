@@ -7,6 +7,7 @@
  * Endpoints:
  * - POST /create-pack (frontend)
  * - POST /update-pack (frontend)
+ * - POST /get-pack (frontend)
  * - POST /delete-pack (frontend)
  * 
  * - POST /create-invite (frontend)
@@ -20,7 +21,7 @@
  */
 
 import { getAccessTokenPayload } from "./utilities/jwt.js";
-import { createPack, updatePack, deletePack } from "./packs.js"
+import { createPack, updatePack, getPack, deletePack } from "./packs.js"
 import { createPackInvite, redeemPackInvite, deleteInvite, addResourceToPack, removeResourceFromPack } from "./invites.js"
 import { unfollowPack } from "./users.js"
 
@@ -50,6 +51,9 @@ export default {
       }
       if (path === "/update-pack" && request.method === "POST") {
         return await handleUpdatePack(request, env);
+      }
+      if (path === "/get-pack" && request.method === "POST") {
+        return await handleGetPack(request, env);
       }
       if (path === "/delete-pack" && request.method === "POST") {
         return await handleDeletePack(request, env);
@@ -257,6 +261,69 @@ async function handleUpdatePack(request, env) {
 
   // Pack has been updated
   return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /get-pack
+ * Called by frontend to retrieve an existing resource pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleGetPack(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack uuid
+  const { pack_uuid } = body;
+  if (!pack_uuid || typeof pack_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_pack_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack information
+  let result;
+  try {
+    result = await getPack(env, pack_uuid, requester_uuid);
+  } catch (err) {
+    const status =
+      err.message === "forbidden_action" ? 403 :
+      err.message === "pack_not_found" ? 404 :
+      500;
+
+    return new Response(JSON.stringify({ error: err.message }), {
+      status,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Pack has been found
+  return new Response(JSON.stringify(result), {
     status: 200,
     headers: CORS_HEADERS
   });
