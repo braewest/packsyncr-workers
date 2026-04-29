@@ -188,6 +188,40 @@ async function updatePackManifest(env, pack_uuid, updates) {
 }
 
 /**
+ * Get a resource pack.
+ */
+export async function getPack(env, pack_uuid, requester_uuid) {
+  const pack = await env.PACKSYNCR_DB.prepare(`
+    SELECT * FROM resource_packs
+    WHERE pack_uuid = ?
+  `).bind(pack_uuid).first();
+
+  if (!pack) throw new Error("pack_not_found");
+
+  let user_role;
+  if (pack.owner_uuid === requester_uuid) {
+    user_role = "owner"
+  } else {
+    const collaborator = await env.PACKSYNCR_DB.prepare(`
+      SELECT role FROM pack_collaborators
+      WHERE pack_uuid = ? AND user_uuid = ?
+    `).bind(pack_uuid, requester_uuid).first();
+
+    if (!collaborator) throw new Error("forbidden_action");
+    user_role = collaborator.role;
+  }
+
+  const { results: resources } = await env.PACKSYNCR_DB.prepare(`
+    SELECT r.resource_uuid, r.type, r.name, r.description, r.owner_uuid, pr.added_by, pr.added_at
+    FROM pack_resources pr
+    JOIN resources r ON pr.resource_uuid = r.resource_uuid
+    WHERE pr.pack_uuid = ?
+  `).bind(pack_uuid).all();
+
+  return { pack: { ...pack, user_role }, resources };
+}
+
+/**
  * Delete a resource pack.
  */
 export async function deletePack(env, packInfo) {
