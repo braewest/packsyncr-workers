@@ -1,3 +1,5 @@
+import { addResourceToManifest, removeResourceFromManifest } from "./packs";
+
 /**
  * COLLABORATOR ROLES:
  * follower: Can read all resources in a pack.
@@ -330,6 +332,21 @@ export async function addResourceToPack(env, pack_uuid, requester_uuid, invite_c
       WHERE invite_code = ?
     `).bind(invite_code).run();
   }
+
+  // Fetch resource info and update pack manifest
+  const resource = await env.PACKSYNCR_DB.prepare(`
+    SELECT resource_uuid, type, name, updated_at
+    FROM resources
+    WHERE resource_uuid = ?
+  `).bind(invite.resource_uuid).first();
+
+  if (!resource) throw new Error("resource_not_found");
+
+  try {
+    await addResourceToManifest(env, pack_uuid, resource);
+  } catch {
+    throw new Error("manifest_not_updated");
+  }
 }
 
 /**
@@ -382,6 +399,13 @@ export async function removeResourceFromPack(env, pack_uuid, resource_uuid, requ
     SET resources_used = resources_used - 1
     WHERE pack_uuid = ? AND resources_used > 0
   `).bind(pack_uuid).run();
+
+  // Remove resource from pack manifest
+  try {
+    await removeResourceFromManifest(env, pack_uuid, resource_uuid);
+  } catch {
+    throw new Error("manifest_not_updated");
+  }
 }
 
 // Deletes resource invite code
