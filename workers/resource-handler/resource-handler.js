@@ -27,8 +27,8 @@ const FRONTEND_ORIGIN = "https://www.packsyncr.com";
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": FRONTEND_ORIGIN,
   "Access-Control-Allow-Credentials": "true",
-  "Access-Control-Allow-Headers": "Content-Type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
   "Content-Type": "application/json"
 };
 
@@ -245,7 +245,7 @@ async function handleUpdateResource(request, env) {
   } catch (err) {
     const status = 
       err.message === "invalid_fields" ? 400 :
-      err.messgae === "invalid_name_length" ? 400 :
+      err.message === "invalid_name_length" ? 400 :
       err.message === "invalid_description_length" ? 400 :
       err.message === "forbidden_action" ? 403 :
       500;
@@ -594,7 +594,6 @@ async function handleUploadFile(request, env) {
   const match = content_type.match(/boundary=(.+)$/);
   const boundary = "--" + match[1];
 
-  let testString;
   try {
     // Pass the raw request body stream to uploadFile
     await uploadFile(env, requester_uuid, request_body, boundary);
@@ -624,7 +623,7 @@ async function handleUploadFile(request, env) {
   }
 
   // File has been uploaded
-  return new Response(JSON.stringify({ success: testString }), {
+  return new Response(JSON.stringify({ success: true }), {
     status: 201,
     headers: CORS_HEADERS
   });
