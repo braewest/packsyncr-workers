@@ -1,4 +1,4 @@
-import { addResourceToManifest, removeResourceFromManifest } from "./packs";
+import { addResourceToManifest, removeResourceFromManifest } from "./packs.js";
 
 /**
  * COLLABORATOR ROLES:
