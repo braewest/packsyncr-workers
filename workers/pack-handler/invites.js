@@ -1,417 +1,848 @@
-import { addResourceToManifest, removeResourceFromManifest } from "./packs.js";
-
 /**
- * COLLABORATOR ROLES:
- * follower: Can read all resources in a pack.
+ * pack-handler
  * 
- * collaborator: Can add, update, and delete their own resources from a pack. 
- *               Can read all resources in a pack.
+ * Environment Variables:
+ * - JWT_SECRET (string)
  * 
- * admin: Can add and update their own resources, as well as delete any resources from a pack.
- *        Can generate invite codes (excluding admin invites).
- *        Can read all resources in a pack.
+ * Endpoints:
+ * - POST /create-pack (frontend)
+ * - POST /update-pack (frontend)
+ * - POST /get-pack (frontend)
+ * - GET /get-my-packs (frontend)
+ * - POST /delete-pack (frontend)
+ * 
+ * - POST /create-invite (frontend)
+ * - POST /redeem-invite (frontend)
+ * - POST /delete-invite (frontend)
+ * 
+ * - POST /add-resource (frontend)
+ * - POST /remove-resource (frontend)
+ * 
+ * - POST /unfollow-pack (frontend)
  */
-const COLLABORATOR_ROLES = ["follower", "collaborator", "admin"]; // TODO: add owner role
-const ROLE_PRIORITY = {
-  follower: 1,
-  collaborator: 2,
-  admin: 3
+
+import { getAccessTokenPayload } from "./utilities/jwt.js";
+import { createPack, updatePack, getPack, getMyPacks, deletePack } from "./packs.js"
+import { createPackInvite, redeemPackInvite, deleteInvite, addResourceToPack, removeResourceFromPack } from "./invites.js"
+import { unfollowPack } from "./users.js"
+
+const FRONTEND_ORIGIN = "https://www.packsyncr.com";
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": FRONTEND_ORIGIN,
+  "Access-Control-Allow-Credentials": "true",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
+  "Content-Type": "application/json"
 };
 
-const MINIMUM_SET_DURATION = 300;
-const MINIMUM_SET_MAX_USES = 1;
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const path = url.pathname.replace(/\/$/, "");
 
-/**
- * Create an invite code for joining a resource pack. Roles determine what permissions you have. Can set a duration (seconds) and max uses for a code.
- */
-export async function createPackInvite(env, pack_uuid, requester_uuid, role, duration, max_uses) {
-    const now = Math.floor(Date.now() / 1000);
-
-    if (!COLLABORATOR_ROLES.includes(role)) {
-        throw new Error("invalid_role");
+    // Handle preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
 
-    // Validate duration if defined
-    let expiration = -1;
-    if (duration !== undefined) {
-        if (!Number.isInteger(duration) || duration < MINIMUM_SET_DURATION) {
-            throw new Error("invalid_duration");
-        }
-        expiration = now + duration
-    }
-
-    // Validate uses if defined
-    let allowed_uses = -1;
-    if (max_uses !== undefined) {
-        if (!Number.isInteger(max_uses) || max_uses < MINIMUM_SET_MAX_USES) {
-            throw new Error("invalid_max_uses");
-        }
-        allowed_uses = max_uses;
-    }
-
-    // Retrieve pack to check if the request is the owner
-    const pack = await env.PACKSYNCR_DB.prepare(`
-      SELECT owner_uuid
-      FROM resource_packs
-      WHERE pack_uuid = ?
-    `).bind(pack_uuid).first();
-
-    if (!pack) {
-      throw new Error("pack_not_found");
-    }
-
-    if (pack.owner_uuid !== requester_uuid) {
-      // Check if the requester is an admin
-      const collaborator = await env.PACKSYNCR_DB.prepare(`
-        SELECT role
-        FROM pack_collaborators
-        WHERE pack_uuid = ? AND user_uuid = ?
-      `).bind(pack_uuid, requester_uuid).first();
-
-      if (!collaborator || collaborator.role !== "admin" || role === "admin") { // Admins cannot generate invite codes for admin role
-        throw new Error("forbidden_action");
+    try {
+      // Request Handler
+      if (path === "/create-pack" && request.method === "POST") {
+        return await handleCreatePack(request, env);
       }
+      if (path === "/update-pack" && request.method === "POST") {
+        return await handleUpdatePack(request, env);
+      }
+      if (path === "/get-pack" && request.method === "POST") {
+        return await handleGetPack(request, env);
+      }
+      if (path === "/get-my-packs" && request.method === "GET") {
+        return await handleGetMyPacks(request, env);
+      }
+      if (path === "/delete-pack" && request.method === "POST") {
+        return await handleDeletePack(request, env);
+      }
+      if (path === "/create-invite" && request.method === "POST") {
+        return await handleCreateInvite(request, env);
+      }
+      if (path === "/redeem-invite" && request.method === "POST") {
+        return await handleRedeemInvite(request, env);
+      }
+      if (path === "/delete-invite" && request.method === "POST") {
+        return await handleDeleteInvite(request, env);
+      }
+      if (path === "/add-resource" && request.method === "POST") {
+        return await handleAddResource(request, env);
+      }
+      if (path === "/remove-resource" && request.method === "POST") {
+        return await handleRemoveResource(request, env);
+      }
+      if (path === "/unfollow-pack" && request.method === "POST") {
+        return await handleUnfollowPack(request, env);
+      }
+      return new Response("Not found", {
+        status: 404,
+        headers: CORS_HEADERS
+      });
+    } catch (err) {
+      console.error("Unhandled error:", err);
+      return new Response(JSON.stringify({ error: "internal_error" }), {
+        status: 500,
+        headers: CORS_HEADERS
+      });
     }
-
-    // Generate unique invite code
-    const invite_code = "p-" + crypto.randomUUID();
-
-    // Insert invite code into database
-    try {
-      await env.PACKSYNCR_DB.prepare(`
-        INSERT INTO pack_invite_codes (
-          invite_code,
-          pack_uuid,
-          role,
-          creator_uuid,
-          created_at,
-          expires_at,
-          max_uses,
-          uses
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(invite_code, pack_uuid, role, requester_uuid, now, expiration, allowed_uses, 0).run();
-    } catch {
-      throw new Error("db_insert_failed");
-    }
-
-    return invite_code;
+  }
 }
 
 /**
- * Redeem an invite code to join a resource pack. Roles determine what permissions you have.
+ * /create-pack
+ * Called by frontend to create a new resource pack.
+ * Authorization: Bearer <access_token>
  */
-export async function redeemPackInvite(env, invite_code, requester_uuid) {
-  const now = Math.floor(Date.now() / 1000);
-
-  // Fetch invite
-  const invite = await env.PACKSYNCR_DB.prepare(`
-    SELECT *
-    FROM pack_invite_codes
-    WHERE invite_code = ?
-  `).bind(invite_code).first();
-
-  if (!invite) {
-    throw new Error("invite_not_found");
-  }
-
-  // Check expiration
-  if (invite.expires_at !== -1 && invite.expires_at < now) {
-    await deleteInviteFromCode(env, invite_code);
-    throw new Error("invite_expired");
-  }
-
-  // Check uses
-  if (invite.max_uses !== -1 && invite.uses >= invite.max_uses) {
-    await deleteInviteFromCode(env, invite_code);
-    throw new Error("invite_used_up");
-  }
-
-  // Check if already an existing collaborator
-  const existing = await env.PACKSYNCR_DB.prepare(`
-    SELECT role
-    FROM pack_collaborators
-    WHERE pack_uuid = ? AND user_uuid = ?
-  `).bind(invite.pack_uuid, requester_uuid).first();
-
-  if (existing) {
-    // If existing role priority is higher or equal, do nothing
-    if (ROLE_PRIORITY[existing.role] >= ROLE_PRIORITY[invite.role]) {
-      return; // User will still get a 200 status code because they are a collaborator at or above the redeemable level
-    }
-  }
-
-  // Check if user can follow another pack (unless they already have an existing role)
-  if (!existing) {
-    // Fetch requester information
-    const user = await env.PACKSYNCR_DB.prepare(`
-      SELECT packs_followed, follow_limit
-      FROM users
-      WHERE uuid = ?
-    `).bind(requester_uuid).first();
-
-    if (!user) {
-      throw new Error("user_not_found");
-    }
-    if (user.packs_followed >= user.follow_limit) {
-      throw new Error("follow_limit_reached");
-    }
-
-    // Increment follow count
-    try {
-      await env.PACKSYNCR_DB.prepare(`
-        UPDATE users
-        SET packs_followed = packs_followed + 1
-        WHERE uuid = ?
-      `).bind(requester_uuid).run();
-    } catch {
-      throw new Error("increment_follow_count_failed");
-    }
-  }
-
-  // Add collaborator
+async function handleCreatePack(request, env) {
+  // Extract access token payload
+  let payload;
   try {
-    await env.PACKSYNCR_DB.prepare(`
-      INSERT OR REPLACE INTO pack_collaborators (
-        pack_uuid,
-        user_uuid,
-        role,
-        joined_at
-      ) VALUES (?, ?, ?, ?)
-    `).bind(invite.pack_uuid, requester_uuid, invite.role, now).run();
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
   } catch {
-    throw new Error("redeem_failed");
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
   }
 
-  // Increment invite use and check if invite can be deleted
-  if (invite.max_uses !== -1 && invite.uses + 1 >= invite.max_uses) {
-    await deleteInviteFromCode(env, invite_code);
-  } else {
-    // Increment invite code uses
-    await env.PACKSYNCR_DB.prepare(`
-      UPDATE pack_invite_codes
-      SET uses = uses + 1
-      WHERE invite_code = ?
-    `).bind(invite_code).run();
+  // Retrieve name (required) and description (optional)
+  const { name, description } = body;
+  if (!name || typeof name !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_name"}), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
   }
-}
-
-/**
- * Delete an invite code for a resource pack if requester is the invite creator or owner
- */
-export async function deleteInvite(env, invite_code, requester_uuid) {
-  // Fetch invite
-  const invite = await env.PACKSYNCR_DB.prepare(`
-    SELECT pack_uuid, creator_uuid
-    FROM pack_invite_codes
-    WHERE invite_code = ?
-  `).bind(invite_code).first();
-
-  if (!invite) {
-    throw new Error("invite_not_found");
+  if (description !== undefined && typeof description !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_description" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
   }
 
-  // Check if requester is able to delete the invite code (creator or pack owner)
-  if (invite.creator_uuid !== requester_uuid) {
-    // Fetch pack to get the owner
-    const pack = await env.PACKSYNCR_DB.prepare(`
-      SELECT owner_uuid
-      FROM resource_packs
-      WHERE pack_uuid = ?
-    `).bind(invite.pack_uuid).first();
-
-    if (!pack) {
-      throw new Error("pack_not_found");
-    }
-
-    // Check if requester is owner
-    if (pack.owner_uuid !== requester_uuid) {
-      throw new Error("forbidden_action");
-    }
-  }
-
-  // Delete invite
-  await deleteInviteFromCode(env, invite_code);
-}
-
-// Deletes pack invite code
-async function deleteInviteFromCode(env, invite_code) {
-  await env.PACKSYNCR_DB.prepare(`
-    DELETE FROM pack_invite_codes
-    WHERE invite_code = ?
-  `).bind(invite_code).run();
-}
-
-/**
- * Add a resource to a pack if requester has authorization.
- */
-export async function addResourceToPack(env, pack_uuid, requester_uuid, invite_code) {
-  const now = Math.floor(Date.now() / 1000);
-
-  // Check if pack can follow another resource
-  const pack = await env.PACKSYNCR_DB.prepare(`
-    SELECT resources_used, resources_limit
-    FROM resource_packs
-    WHERE pack_uuid = ?
-  `).bind(pack_uuid).first();
-
-  if (!pack) {
-    throw new Error("pack_not_found");
-  }
-  if (pack.resources_used >= pack.resources_limit) {
-    throw new Error("resource_limit_reached");
-  }
-
-  // Retrieve user to check auhtority level
+  // Check if user can create a pack
   const user = await env.PACKSYNCR_DB.prepare(`
-    SELECT role
-    FROM pack_collaborators
-    WHERE pack_uuid = ? AND user_uuid = ?
-  `).bind(pack_uuid, requester_uuid).first();
-
-  // Check user's authority level
-  if (!user || ROLE_PRIORITY[user.role] < ROLE_PRIORITY["collaborator"]) {
-    throw new Error("unauthorized_action");
-  }
-
-  // Fetch invite
-  const invite = await env.PACKSYNCR_DB.prepare(`
-    SELECT *
-    FROM resource_invite_codes
-    WHERE invite_code = ?
-  `).bind(invite_code).first();
-
-  if (!invite) {
-    throw new Error("invite_not_found");
-  }
-
-  // Check expiration
-  if (invite.expires_at !== -1 && invite.expires_at < now) {
-    await deleteInviteFromResourceCode(env, invite_code);
-    throw new Error("invite_expired");
-  }
-
-  // Check uses
-  if (invite.max_uses !== -1 && invite.uses >= invite.max_uses) {
-    await deleteInviteFromResourceCode(env, invite_code);
-    throw new Error("invite_used_up");
-  }
-
-  // Add resource
-  try {
-    await env.PACKSYNCR_DB.prepare(`
-      INSERT INTO pack_resources (
-        pack_uuid,
-        resource_uuid,
-        added_by,
-        added_at
-      ) VALUES (?, ?, ?, ?)
-    `).bind(pack_uuid, invite.resource_uuid, requester_uuid, now).run();
-  } catch {
-    throw new Error("redeem_failed");
-  }
-
-  // Increment resource count
-  try {
-    await env.PACKSYNCR_DB.prepare(`
-        UPDATE resource_packs
-        SET resources_used = resources_used + 1
-        WHERE pack_uuid = ?
-      `).bind(pack_uuid).run();
-  } catch {
-    throw new Error("increment_resource_count_failed");
-  }
-
-  // Increment invite use and check if invite can be deleted
-  if (invite.max_uses !== -1 && invite.uses + 1 >= invite.max_uses) {
-    await deleteInviteFromResourceCode(env, invite_code);
-  } else {
-    // Increment invite code uses
-    await env.PACKSYNCR_DB.prepare(`
-      UPDATE resource_invite_codes
-      SET uses = uses + 1
-      WHERE invite_code = ?
-    `).bind(invite_code).run();
-  }
-
-  // Fetch resource info and update pack manifest
-  const resource = await env.PACKSYNCR_DB.prepare(`
-    SELECT resource_uuid, type, name, updated_at
-    FROM resources
-    WHERE resource_uuid = ?
-  `).bind(invite.resource_uuid).first();
-
-  if (!resource) throw new Error("resource_not_found");
-
-  try {
-    await addResourceToManifest(env, pack_uuid, resource);
-  } catch {
-    throw new Error("manifest_not_updated");
-  }
-}
-
-/**
- * Remove a resource from a pack if requester has authorization (collaborator that added it or admin).
- */
-export async function removeResourceFromPack(env, pack_uuid, resource_uuid, requester_uuid) {
-  // Fetch resource and pack link
-  const resource = await env.PACKSYNCR_DB.prepare(`
-    SELECT added_by
-    FROM pack_resources
-    WHERE pack_uuid = ? AND resource_uuid = ?
-  `).bind(pack_uuid, resource_uuid).first();
-
-  if (!resource) {
-    throw new Error("pack_resource_not_found");
-  }
-
-  // Retrieve user to check auhtority level
-  const user = await env.PACKSYNCR_DB.prepare(`
-    SELECT role
-    FROM pack_collaborators
-    WHERE pack_uuid = ? AND user_uuid = ?
-  `).bind(pack_uuid, requester_uuid).first();
+    SELECT * FROM users
+    WHERE uuid = ?
+  `).bind(requester_uuid).first();
 
   if (!user) {
-    throw new Error("user_not_found");
+    return new Response(JSON.stringify({ error: "user_not_found" }), {
+      status: 404,
+      headers: CORS_HEADERS
+    });
   }
 
-  // Check user's authority level
-  const isAdmin = ROLE_PRIORITY[user.role] >= ROLE_PRIORITY["admin"];
-  const isAdderCollaborator = resource.added_by === requester_uuid && ROLE_PRIORITY[user.role] >= ROLE_PRIORITY["collaborator"]
+  if (user.packs_created >= user.packs_limit) {
+    return new Response(JSON.stringify({ error: "pack_limit_reached" }), {
+      status: 403,
+      headers: CORS_HEADERS
+    });
+  }
 
-  if (!isAdmin && !isAdderCollaborator) {
-    throw new Error("unauthorized_action");
+  // Create resource pack
+  try {
+    await createPack(env, requester_uuid, name, description);
+  } catch (err) {
+    const status = 
+      err.message === "invalid_name_length" ? 400 :
+      err.message === "invalid_description_length" ? 400 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Pack has been created
+  return new Response(JSON.stringify({ success: true }), {
+    status: 201,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /update-pack
+ * Called by frontend to update an existing resource pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleUpdatePack(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack uuid, name and/or description
+  const { pack_uuid, name, description } = body;
+  if (!pack_uuid || typeof pack_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_pack_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+  if (name === undefined && description === undefined) {
+    return new Response(JSON.stringify({ error: "invalid_fields" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+  if (name !== undefined && typeof name !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_name" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+  if (description !== undefined && typeof description !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_description" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Update pack information and manifest
+  try {
+    await updatePack(env, {
+      pack_uuid,
+      owner_uuid: requester_uuid,
+      name,
+      description
+    })
+  } catch (err) {
+    const status = 
+      err.message === "invalid_fields" ? 400 :
+      err.messgae === "invalid_name_length" ? 400 :
+      err.message === "invalid_description_length" ? 400 :
+      err.message === "forbidden_action" ? 403 :
+      err.message === "manifest_not_updated" ? 500 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Pack has been updated
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /get-pack
+ * Called by frontend to retrieve an existing resource pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleGetPack(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack uuid
+  const { pack_uuid } = body;
+  if (!pack_uuid || typeof pack_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_pack_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack information
+  let result;
+  try {
+    result = await getPack(env, pack_uuid, requester_uuid);
+  } catch (err) {
+    const status =
+      err.message === "forbidden_action" ? 403 :
+      err.message === "pack_not_found" ? 404 :
+      500;
+
+    return new Response(JSON.stringify({ error: err.message }), {
+      status,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Pack has been found
+  return new Response(JSON.stringify(result), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /get-my-packs
+ * Called by frontend to retrieve a list of user's packs and followed packs.
+ * Authorization: Bearer <access_token>
+ */
+async function handleGetMyPacks(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve pack list
+  let packs;
+  try {
+    packs = await getMyPacks(env, requester_uuid);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Successfully retrieved pack list
+  return new Response(JSON.stringify({ packs }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /delete-pack
+ * Called by frontend to delete an existing resource pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleDeletePack(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of deleter
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack uuid
+  const { pack_uuid } = body;
+  if (!pack_uuid || typeof pack_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_pack_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Delete pack and manifest
+  try {
+    await deletePack(env, {
+      pack_uuid,
+      owner_uuid: requester_uuid
+    });
+  } catch (err) {
+    const status = 
+      err.message === "forbidden_action" ? 403 :
+      err.message === "manifest_not_deleted" ? 500 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Pack has been deleted
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /create-invite
+ * Called by frontend to create an invite code for a pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleCreateInvite(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack uuid, role, expires_at, and max_uses
+  const { pack_uuid, role, duration, max_uses } = body;
+  if (!pack_uuid || typeof pack_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_pack_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+  if (!role || typeof role !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_role" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Create invite code
+  let invite_code;
+  try {
+    invite_code = await createPackInvite(env, pack_uuid, requester_uuid, role, duration, max_uses);
+  } catch (err) {
+    const status = 
+      err.message === "invalid_role" ? 400 :
+      err.message === "invalid_duration" ? 400 :
+      err.message === "invalid_max_uses" ? 400 :
+      err.message === "forbidden_action" ? 403 :
+      err.message === "pack_not_found" ? 404 :
+      err.message === "db_insert_failed" ? 500 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Invite has been created
+  return new Response(JSON.stringify({ invite_code }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /redeem-invite
+ * Called by frontend to redeem an invite code for a user to join a pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleRedeemInvite(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve invite_code
+  const { invite_code } = body;
+  if (!invite_code || typeof invite_code !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_invite_code" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Redeem invite code
+  try {
+    await redeemPackInvite(env, invite_code, requester_uuid);
+  } catch (err) {
+    const status = 
+      err.message === "invite_expired" ? 400 :
+      err.message === "invite_used_up" ? 400 :
+      err.message === "follow_limit_reached" ? 403 :
+      err.message === "invite_not_found" ? 404 :
+      err.message === "user_not_found" ? 404 :
+      err.message === "redeem_failed" ? 500 :
+      err.message === "increment_follow_count_failed" ? 500 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Invite has been redeemed
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /delete-invite
+ * Called by frontend to delete an invite code for a pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleDeleteInvite(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve invite_code
+  const { invite_code } = body;
+  if (!invite_code || typeof invite_code !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_invite_code" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // delete invite
+  try {
+    await deleteInvite(env, invite_code, requester_uuid);
+  } catch (err) {
+    const status = 
+      err.message === "forbidden_action" ? 403 :
+      err.message === "invite_not_found" ? 404 :
+      err.message === "pack_not_found" ? 404 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Invite has been deleted
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /add-resource
+ * Called by frontend to add resource to resource pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleAddResource(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack_uuid and invite_code
+  const { pack_uuid, invite_code } = body;
+  if (!pack_uuid || typeof pack_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_pack_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+  if (!invite_code || typeof invite_code !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_invite_code" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Add resource to pack
+  try {
+    await addResourceToPack(env, pack_uuid, requester_uuid, invite_code);
+  } catch (err) {
+    const status = 
+      err.message === "invite_expired" ? 400 :
+      err.message === "invite_used_up" ? 400 :
+      err.message === "resource_limit_reached" ? 403 :
+      err.message === "unauthorized_action" ? 403 :
+      err.message === "invite_not_found" ? 404 :
+      err.message === "user_not_found" ? 404 :
+      err.message === "pack_not_found" ? 404 :
+      err.message === "redeem_failed" ? 500 :
+      err.message === "increment_resource_count_failed" ? 500 :
+      err.message === "manifest_not_updated" ? 500 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Resource has been added
+  return new Response(JSON.stringify({ success: true }), {
+    status: 201,
+    headers: CORS_HEADERS
+  });
+}
+
+/**
+ * /remove-resource
+ * Called by frontend to remove resource from resource pack.
+ * Authorization: Bearer <access_token>
+ */
+async function handleRemoveResource(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack_uuid and resource_uuid
+  const { pack_uuid, resource_uuid } = body;
+  if (!pack_uuid || typeof pack_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_pack_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+  if (!resource_uuid || typeof resource_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_resource_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
   }
 
   // Remove resource from pack
-  const result = await env.PACKSYNCR_DB.prepare(`
-    DELETE FROM pack_resources
-    WHERE pack_uuid = ? AND resource_uuid = ?
-  `).bind(pack_uuid, resource_uuid).run();
-
-  if (result.meta.changes !== 1) {
-    throw new Error("remove_failed");
-  }
-
-  // Decrement resource count
-  await env.PACKSYNCR_DB.prepare(`
-    UPDATE resource_packs
-    SET resources_used = resources_used - 1
-    WHERE pack_uuid = ? AND resources_used > 0
-  `).bind(pack_uuid).run();
-
-  // Remove resource from pack manifest
   try {
-    await removeResourceFromManifest(env, pack_uuid, resource_uuid);
-  } catch {
-    throw new Error("manifest_not_updated");
+    await removeResourceFromPack(env, pack_uuid, resource_uuid, requester_uuid);
+  } catch (err) {
+    const status = 
+      err.message === "unauthorized_action" ? 403 :
+      err.message === "pack_resource_not_found" ? 404 :
+      err.message === "user_not_found" ? 404 :
+      err.message === "remove_failed" ? 500 :
+      err.message === "manifest_not_updated" ? 500 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
   }
+
+  // Resource has been removed
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
 }
 
-// Deletes resource invite code
-async function deleteInviteFromResourceCode(env, invite_code) {
-  await env.PACKSYNCR_DB.prepare(`
-    DELETE FROM resource_invite_codes
-    WHERE invite_code = ?
-  `).bind(invite_code).run();
+/**
+ * /unfollow-pack
+ * Called by frontend for a user to unfollow a pack they are a follower on.
+ * Authorization: Bearer <access_token>
+ */
+async function handleUnfollowPack(request, env) {
+  // Extract access token payload
+  let payload;
+  try {
+    payload = await getAccessTokenPayload(request, env);
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+        status: 401,
+        headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve uuid of updater
+  const requester_uuid = payload.sub;
+
+  // Retrieve body information
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid_json" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  // Retrieve pack_uuid
+  const { pack_uuid } = body;
+  if (!pack_uuid || typeof pack_uuid !== "string") {
+    return new Response(JSON.stringify({ error: "invalid_pack_uuid" }), {
+      status: 400,
+      headers: CORS_HEADERS
+    });
+  }
+
+  try {
+    await unfollowPack(env, pack_uuid, requester_uuid);
+  } catch (err) {
+    const status = 
+      err.message === "not_following_pack" ? 400 :
+      err.message === "forbidden_action" ? 403 :
+      500;
+
+      return new Response(JSON.stringify({ error: err.message }), {
+        status,
+        headers: CORS_HEADERS
+      });
+  }
+
+  // Pack has been unfollowed
+  return new Response(JSON.stringify({ success: true }), {
+    status: 200,
+    headers: CORS_HEADERS
+  });
 }
