@@ -270,3 +270,55 @@ export async function deletePack(env, packInfo) {
     throw new Error("manifest_not_deleted");
   }
 }
+
+/**
+ * Add a resource entry to the pack manifest.
+ */
+export async function addResourceToManifest(env, pack_uuid, resource) {
+  const key = `${MANIFEST_LOCATION_PREFIX}${pack_uuid}${MANIFEST_LOCATION_POSTFIX}`;
+  const now = Math.floor(Date.now() / 1000);
+
+  const obj = await env.MANIFEST_BUCKET.get(key);
+  if (!obj) throw new Error("manifest_not_found");
+
+  const manifest = JSON.parse(await obj.text());
+
+  if (!manifest.resources.some(r => r.resource_uuid === resource.resource_uuid)) {
+    manifest.resources.push({
+      resource_uuid: resource.resource_uuid,
+      type: resource.type,
+      name: resource.name,
+      updated_at: resource.updated_at
+    });
+  }
+
+  manifest.pack.updated_at = now;
+
+  await env.MANIFEST_BUCKET.put(
+    key,
+    JSON.stringify(manifest, null, 2),
+    { httpMetadata: { contentType: "application/json" } }
+  );
+}
+
+/**
+ * Remove a resource entry from the pack manifest.
+ */
+export async function removeResourceFromManifest(env, pack_uuid, resource_uuid) {
+  const key = `${MANIFEST_LOCATION_PREFIX}${pack_uuid}${MANIFEST_LOCATION_POSTFIX}`;
+  const now = Math.floor(Date.now() / 1000);
+
+  const obj = await env.MANIFEST_BUCKET.get(key);
+  if (!obj) throw new Error("manifest_not_found");
+
+  const manifest = JSON.parse(await obj.text());
+
+  manifest.resources = manifest.resources.filter(r => r.resource_uuid !== resource_uuid);
+  manifest.pack.updated_at = now;
+
+  await env.MANIFEST_BUCKET.put(
+    key,
+    JSON.stringify(manifest, null, 2),
+    { httpMetadata: { contentType: "application/json" } }
+  );
+}
