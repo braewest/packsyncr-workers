@@ -30,7 +30,7 @@ const FRONTEND_ORIGIN = "https://www.packsyncr.com";
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": FRONTEND_ORIGIN,
   "Access-Control-Allow-Credentials": "true",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Content-Type": "application/json"
 };
@@ -699,6 +699,7 @@ async function handleAddResource(request, env) {
       err.message === "pack_not_found" ? 404 :
       err.message === "redeem_failed" ? 500 :
       err.message === "increment_resource_count_failed" ? 500 :
+      err.message === "manifest_not_updated" ? 500 :
       500;
 
       return new Response(JSON.stringify({ error: err.message }), {
@@ -769,6 +770,7 @@ async function handleRemoveResource(request, env) {
       err.message === "pack_resource_not_found" ? 404 :
       err.message === "user_not_found" ? 404 :
       err.message === "remove_failed" ? 500 :
+      err.message === "manifest_not_updated" ? 500 :
       500;
 
       return new Response(JSON.stringify({ error: err.message }), {
